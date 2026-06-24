@@ -1,9 +1,32 @@
-# mini-deepseek-v4 — Step 1 scaffold
+# mini-deepseek-v4
 
-베이스라인 + 측정 인프라. V4 컴포넌트(CSA/HCA/MoE/mHC/Muon/MTP)는 `components/`에
-스텁으로 배선돼 있고, 해당 step에서 `NotImplementedError`를 채우면 됩니다.
-전체 계획·검증은 `ROADMAP.md`, 보고서 원문은 [arXiv:2606.19348](https://arxiv.org/abs/2606.19348)
-(저작권상 PDF는 저장소에 포함하지 않음 — `.gitignore` 참조).
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-bf16%20%7C%20SDPA-ee4c2c.svg)](https://pytorch.org/)
+[![arXiv](https://img.shields.io/badge/arXiv-2606.19348-b31b1b.svg)](https://arxiv.org/abs/2606.19348)
+[![Roadmap](https://img.shields.io/badge/roadmap-Step%201%20%2F%208-success.svg)](ROADMAP.md)
+
+> **단일 RTX 3090에서, from-scratch PyTorch로, DeepSeek-V4의 핵심 컴포넌트를
+> "한 번에 하나씩" 토이 스케일로 재현하는 측정 중심(measurement-first) 연구 프로젝트.**
+
+DeepSeek-V4 보고서([arXiv:2606.19348](https://arxiv.org/abs/2606.19348))의
+아키텍처 혁신(CSA/HCA 압축-KV 어텐션, mHC, DeepSeekMoE 델타, Muon, MTP, FP4 QAT)을
+**이기는 것이 목표가 아니라**, 각 메커니즘이 작동하는 레짐을 직접 만들어 그 정성적 거동을
+재현하고 *왜* 그렇게 동작하는지 설명하는 데 목표를 둡니다. 성공의 정의는
+"swap이 baseline보다 loss가 낮다"가 아니라 **"메커니즘 고유 관측량(expert load CV,
+residual spectral norm, Sinkhorn 수렴, KV/FLOPs 곡선 …)의 재현 + WHY"** 입니다.
+
+설계의 두 축:
+- **baseline-always-runs** — 표준 dense 트랜스포머(RMSNorm·RoPE·SwiGLU·causal SDPA)가
+  항상 돌고, config 플래그 하나만 바꿔 V4 컴포넌트로 *디스패치*합니다. 변수 1개만 바뀐
+  깨끗한 비교가 가능해집니다.
+- **2σ 게이트** — "1 run = 1 data point" 가정을 폐기하고, 모든 효과 주장은 노이즈
+  플로어(σ_seed)의 2σ를 넘어야 "real"로 인정합니다.
+
+현재는 **Step 1(측정 인프라 + 베이스라인)** 단계입니다. V4 컴포넌트는 `components/`에
+스텁으로 배선돼 있고 호출 시 친절한 `NotImplementedError`로 "무엇을·어떻게 만들지"를
+안내합니다. 전체 8단계 계획·사실 교정·방법론은 **[`ROADMAP.md`](ROADMAP.md)** 참조
+(저작권상 보고서 PDF는 저장소에 포함하지 않음 — `.gitignore`).
 
 ## 설치
 ```bash
@@ -67,6 +90,18 @@ components/           CSA/HCA·MoE·mHC·Muon·MTP 스텁(NotImplementedError)
   fake-quant(시뮬, 이득 0).
 - `gpu3090` ~85M는 weights+AdamW ≈ 1.4GB로 24GB에 4배+ 여유. OOM이면 batch→block 순으로 낮춤.
 - 컨텍스트 실험은 4k–16k까지(24GB), 1M은 (C)의 해석 곡선으로만.
+
+## 로드맵 진행 ([`ROADMAP.md`](ROADMAP.md))
+| Step | 내용 | 상태 |
+|---|---|:--:|
+| 1 | 측정 인프라 · 노이즈 플로어 · 시스템 프로파일 | ✅ |
+| 2 | 토크나이저 char-level → BPE (하드 게이트) | ⬜ |
+| 3 | CSA/HCA 압축-KV 어텐션 *(long pole)* | ⬜ |
+| 4 | mHC (Manifold-Constrained Hyper-Connections) | ⬜ |
+| 5 | DeepSeekMoE (V3→V4 델타만) | ⬜ |
+| 6 | Muon 옵티마이저 + MTP | ⬜ |
+| 7 | FP4 QAT (Ampere = simulation-only) | ⬜ |
+| 8 | 폐막 재프로파일 + 귀속 원장 | ⬜ |
 
 ## 라이선스
 MIT (`LICENSE` 참조). 참조하는 DeepSeek-V4 보고서·모델의 라이선스(arXiv:2606.19348)는 이와 별개.

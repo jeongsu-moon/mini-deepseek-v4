@@ -67,3 +67,6 @@ components/           CSA/HCA·MoE·mHC·Muon·MTP 스텁(NotImplementedError)
   fake-quant(시뮬, 이득 0).
 - `gpu3090` ~85M는 weights+AdamW ≈ 1.4GB로 24GB에 4배+ 여유. OOM이면 batch→block 순으로 낮춤.
 - 컨텍스트 실험은 4k–16k까지(24GB), 1M은 (C)의 해석 곡선으로만.
+
+## 라이선스
+MIT (`LICENSE` 참조). 참조하는 DeepSeek-V4 보고서·모델의 라이선스(arXiv:2606.19348)는 이와 별개.

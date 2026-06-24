@@ -1,0 +1,84 @@
+the mini deepseek v4 project studies one component at a time.
+the baseline is a small dense transformer that always runs.
+each swap replaces exactly one part: attention, ffn, residual, optimizer.
+success is not beating the baseline; success is reproducing the mechanism.
+
+node a connects to node b. node b connects to node c. node c connects to node d.
+node d connects to node e. node e connects to node f. node f connects to node g.
+a to b is one step. a to c is two steps. a to d is three steps. a to e is four steps.
+the path from a to g has six steps and passes through b c d e and f in order.
+
+count up: one two three four five six seven eight nine ten eleven twelve.
+count down: twelve eleven ten nine eight seven six five four three two one.
+even: two four six eight ten twelve fourteen sixteen eighteen twenty.
+odd: one three five seven nine eleven thirteen fifteen seventeen nineteen.
+
+key alpha value one. key beta value two. key gamma value three. key delta value four.
+key epsilon value five. key zeta value six. key eta value seven. key theta value eight.
+when the key is alpha the value is one. when the key is beta the value is two.
+when the key is gamma the value is three. when the key is delta the value is four.
+
+attention compresses the past so the present can be read cheaply.
+the compressed sparse attention keeps a small window and selects a few blocks.
+the heavily compressed attention is denser but coarser over long ranges.
+the residual stream is mixed so the signal neither explodes nor vanishes.
+
+the quick brown fox jumps over the lazy dog near the river at dawn.
+the slow gray cat sleeps under the warm sun beside the old stone wall.
+the bright red bird sings above the green field across the wide valley.
+the calm blue lake reflects the tall white clouds before the long night.
+
+if x is small then the loss is large. if x is large then the loss is small.
+if the seed changes then the curve shifts a little but the trend stays the same.
+measure twice, swap once, and write down what the curve did and why.
+the report says read a section, build a part, measure it, and compare honestly.
+
+loop one: read. loop two: build. loop three: measure. loop four: compare.
+loop five: write the note. loop six: pin the commit. loop seven: repeat the loop.
+the indexer scores the keys, the selector keeps the top few, the window keeps the rest.
+the optimizer turns the gradient into an orthogonal step and rescales it to fit.
+
+alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi.
+mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega and back to alpha.
+first comes the noise floor, then the parity check, then the analytic profile.
+only after the floor is known can any later effect be called real or not.
+
+a stable stack keeps the norm near one across every layer of the deep model.
+a deep and narrow model fits a small card while a wide shallow one may not.
+the toy scale cannot reproduce the loss but it can reproduce the behavior.
+behavior is enough to understand why the bigger model makes its choices.
+
+the quick brown fox jumps over the lazy dog near the river at dawn.
+node a connects to node b. node b connects to node c. node c connects to node d.
+count up: one two three four five six seven eight nine ten eleven twelve.
+key alpha value one. key beta value two. key gamma value three. key delta value four.
+loop one: read. loop two: build. loop three: measure. loop four: compare.
+measure twice, swap once, and write down what the curve did and why.
+the baseline is a small dense transformer that always runs and drops its loss.
+success is not beating the baseline; success is reproducing the mechanism and why.
+node a connects to node b. node b connects to node c. node c connects to node d.
+the path from a to g has six steps and passes through b c d e and f in order.
+count up: one two three four five six seven eight nine ten eleven twelve.
+count down: twelve eleven ten nine eight seven six five four three two one.
+key alpha value one. key beta value two. key gamma value three. key delta value four.
+when the key is alpha the value is one. when the key is beta the value is two.
+attention compresses the past so the present can be read cheaply and quickly.
+the compressed sparse attention keeps a small window and selects a few blocks.
+the heavily compressed attention is denser but coarser over the long ranges.
+the residual stream is mixed so the signal neither explodes nor slowly vanishes.
+the quick brown fox jumps over the lazy dog near the river at the calm dawn.
+the slow gray cat sleeps under the warm sun beside the old gray stone wall.
+loop one: read. loop two: build. loop three: measure. loop four: compare.
+loop five: write the note. loop six: pin the commit. loop seven: repeat the loop.
+first comes the noise floor, then the parity check, then the analytic profile.
+only after the floor is known can any later effect be called real or not real.
+a stable stack keeps the norm near one across every layer of the deep tall model.
+the toy scale cannot reproduce the loss but it can reproduce the core behavior.
+measure twice, swap once, and write down what the curve did and exactly why.
+success is not beating the baseline; success is reproducing the mechanism and why.
+the baseline is a small dense transformer that always runs and drops its loss low.
+even two four six eight ten twelve fourteen sixteen eighteen twenty twenty two.
+odd one three five seven nine eleven thirteen fifteen seventeen nineteen twenty one.
+alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron.
+the indexer scores the keys, the selector keeps the top few, the window the rest.
+the optimizer turns the gradient into an orthogonal step and rescales it to fit well.

@@ -1,0 +1,7 @@
+torch>=2.2
+numpy
+matplotlib
+# Optional — needed only for Steps 3-7 cross-checks in parity.py.
+# PIN a commit that includes the deepseek_v4 model (the CSA mask had a bug fixed
+# 2026-05-13; trust the .py source over rendered docs). See ROADMAP.md §0.1.
+# transformers @ git+https://github.com/huggingface/transformers@<pinned-sha>

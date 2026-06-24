@@ -1,0 +1,17 @@
+# report PDF is not redistributed — see arXiv:2606.19348
+DeepSeek_V4.pdf
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.ipynb_checkpoints/
+
+# os / editor
+.DS_Store
+*.swp
+.idea/
+.vscode/

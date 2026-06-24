@@ -1,0 +1,48 @@
+{
+  "config": "small",
+  "init_seed_sweep": {
+    "label": "init_seed",
+    "n": 3,
+    "losses": [
+      2.368124485015869,
+      2.3618674278259277,
+      2.371002674102783
+    ],
+    "mean": 2.3669981956481934,
+    "std": 0.004670607769820225,
+    "ci95_halfwidth": 0.005285290240242335,
+    "per_run_real_effect_threshold_2sigma": 0.00934121553964045,
+    "min_detectable_mean_diff_2sigma_over_sqrt_n": 0.005393153306369729
+  },
+  "data_seed_sweep": {
+    "label": "data_seed",
+    "n": 3,
+    "losses": [
+      2.368124485015869,
+      2.3666739463806152,
+      2.3682146072387695
+    ],
+    "mean": 2.367671012878418,
+    "std": 0.000864659877955248,
+    "ci95_halfwidth": 0.0009784547620580657,
+    "per_run_real_effect_threshold_2sigma": 0.001729319755910496,
+    "min_detectable_mean_diff_2sigma_over_sqrt_n": 0.000998423226589863
+  },
+  "combined": {
+    "label": "combined",
+    "n": 6,
+    "losses": [
+      2.368124485015869,
+      2.3618674278259277,
+      2.371002674102783,
+      2.368124485015869,
+      2.3666739463806152,
+      2.3682146072387695
+    ],
+    "mean": 2.3673346042633057,
+    "std": 0.003026663239477823,
+    "ci95_halfwidth": 0.0024218349829202125,
+    "per_run_real_effect_threshold_2sigma": 0.006053326478955646,
+    "min_detectable_mean_diff_2sigma_over_sqrt_n": 0.002471260186653278
+  }
+}

@@ -1,7 +1,14 @@
 torch>=2.2
 numpy
 matplotlib
-# Optional — needed only for Steps 3-7 cross-checks in parity.py.
-# PIN a commit that includes the deepseek_v4 model (the CSA mask had a bug fixed
-# 2026-05-13; trust the .py source over rendered docs). See ROADMAP.md §0.1.
-# transformers @ git+https://github.com/huggingface/transformers@<pinned-sha>
+datasets        # Step 2: stream the multi-domain corpus (build_corpus.py)
+tokenizers      # Step 2: train/load the frozen 16k BPE (train_tokenizer.py)
+
+# Optional — needed only for Steps 3-7 deepseek_v4 cross-checks in parity.py.
+# PINNED to the first commit AFTER both fixes ROADMAP §0.1 names: CSA "mask collapse"
+# (#45928, 2026-05-13) and hc_head/sinks/position_bias fp32 (#46198, 2026-05-27),
+# and BEFORE the 2026-06-02 MegaMoE/FP4 refactor churn. Installs as 5.10.0.dev0.
+# Provides DeepseekV4{Attention,CSACompressor,HCACompressor}. Trust the .py source
+# over rendered docs; a mismatch may be the library's bug. Re-pin to a June release
+# for Step 5 (MoE) / Step 7 (FP4) which need the refactor.
+# transformers @ git+https://github.com/huggingface/transformers@9ded3dbbfc19d828c719d8ddfd565311314bec26

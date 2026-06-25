@@ -26,6 +26,7 @@ class CharDataset:
         self.vocab_size = len(chars)
         self.block_size = block_size
         self.device = device
+        self.chars_per_token = 1.0          # char-level: 1 token == 1 char (so bpc == bits/token)
 
         data = torch.tensor([self.stoi[c] for c in text], dtype=torch.long)
         n = int(split_frac * len(data))
@@ -99,6 +100,14 @@ class BPEDataset:
         else:
             w = np.asarray([domain_weights.get(d, 0.0) for d in self.domains], dtype=np.float64)
         self.domain_probs = torch.tensor(w / w.sum(), dtype=torch.float)
+
+        # sampling-weighted chars/token: each sampled token spans ch_per_tok_d chars,
+        # and domain d is drawn with prob domain_probs[d], so the expected chars per
+        # sampled token is sum_d prob_d * ch_per_tok_d. Lets train.py report a
+        # cross-tokenizer-comparable bits-per-char alongside the raw nats/token loss.
+        cpt = torch.tensor([man["domains"][d]["chars_per_token"] for d in self.domains],
+                           dtype=torch.float)
+        self.chars_per_token = float((self.domain_probs * cpt).sum())
 
     def get_batch(self, split: str, batch_size: int, generator: torch.Generator,
                   domain: str | None = None):

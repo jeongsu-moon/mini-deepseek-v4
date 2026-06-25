@@ -123,14 +123,21 @@ def train_once(cfg: RunConfig, log: bool = True, verbose: bool = True) -> dict:
                 print(f"  step {step:5d} | train {loss.item():.4f} | val {val:.4f} | lr {lr:.2e}")
 
     final_val = history[-1]["val_loss"]
+    # final_val is nats/TOKEN (== nats/char only for char-level). Report the raw
+    # bits/token AND a cross-tokenizer-comparable bits/char (divide by chars/token;
+    # 1.0 for char-level). Avoids the char-centric "bpc" mislabel under BPE.
+    cpt = getattr(dataset, "chars_per_token", 1.0)
+    bits_per_token = final_val / math.log(2)
     metrics = {
         "name": cfg.name,
         "init_seed": cfg.init_seed,
         "data_seed": cfg.data_seed,
         "params_M": raw_model.num_params() / 1e6,
-        "final_val_loss": final_val,
+        "final_val_loss": final_val,                  # nats/token
         "best_val_loss": best_val,
-        "final_val_bpc": final_val / math.log(2),     # bits per char
+        "chars_per_token": cpt,
+        "final_val_bits_per_token": bits_per_token,
+        "final_val_bpc": bits_per_token / cpt,        # bits/char (cross-tokenizer comparable)
         "wall_clock_s": time.time() - t0,
         "history": history,
     }
@@ -180,9 +187,10 @@ def main():
     if a.no_compile: cfg.train.compile = False
     if a.device is not None: cfg.device = a.device
     m = train_once(cfg)
-    print(f"\nfinal val loss {m['final_val_loss']:.4f} "
-          f"({m['final_val_bpc']:.4f} bpc) | best {m['best_val_loss']:.4f} "
-          f"| {m['wall_clock_s']:.1f}s")
+    print(f"\nfinal val {m['final_val_loss']:.4f} nats/tok "
+          f"| {m['final_val_bits_per_token']:.4f} bits/tok "
+          f"| {m['final_val_bpc']:.4f} bits/char (cpt={m['chars_per_token']:.2f}) "
+          f"| best {m['best_val_loss']:.4f} | {m['wall_clock_s']:.1f}s")
 
 
 if __name__ == "__main__":

@@ -18,8 +18,18 @@ def _load(path: str):
     with open(path) as f:
         blob = json.load(f)
     hist = blob["metrics"]["history"] if "metrics" in blob else blob["history"]
+    fmt = (blob.get("config") or {}).get("data_format", "char")
     steps = [h["step"] for h in hist]
-    return steps, [h["train_loss"] for h in hist], [h["val_loss"] for h in hist]
+    return steps, [h["train_loss"] for h in hist], [h["val_loss"] for h in hist], fmt
+
+
+def _ylabel(fmts: set[str]) -> str:
+    # loss is nats/token (BPE) or nats/char (char-level); label by what's plotted
+    if fmts == {"char"}:
+        return "loss (nats/char)"
+    if fmts == {"bpe"}:
+        return "loss (nats/token)"
+    return "loss (nats per token; nats/char for char-level)"
 
 
 def main():
@@ -38,12 +48,14 @@ def main():
 
     labels = a.labels or [os.path.basename(os.path.dirname(p)) or p for p in a.logs]
     fig, ax = plt.subplots(figsize=(8, 5))
+    fmts = set()
     for path, lab in zip(a.logs, labels):
-        steps, tr, val = _load(path)
+        steps, tr, val, fmt = _load(path)
+        fmts.add(fmt)
         line, = ax.plot(steps, val, marker="o", label=f"{lab} (val)")
         ax.plot(steps, tr, linestyle="--", alpha=0.5, color=line.get_color(),
                 label=f"{lab} (train)")
-    ax.set(xlabel="step", ylabel="loss (nats/char)", title="loss curves")
+    ax.set(xlabel="step", ylabel=_ylabel(fmts), title="loss curves")
     ax.legend(); ax.grid(True, alpha=0.3)
     fig.tight_layout()
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)

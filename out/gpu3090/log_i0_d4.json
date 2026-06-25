@@ -1,0 +1,159 @@
+{
+  "config": {
+    "name": "gpu3090",
+    "model": {
+      "vocab_size": 27,
+      "n_layer": 12,
+      "n_head": 12,
+      "n_embd": 768,
+      "head_dim": 64,
+      "mlp_ratio": 2.6666666666666665,
+      "block_size": 1024,
+      "rope_theta": 10000.0,
+      "rms_eps": 1e-05,
+      "tie_embeddings": true,
+      "attn_type": "full",
+      "ffn_type": "mlp",
+      "residual_type": "standard",
+      "n_hc": 4,
+      "sinkhorn_iters": 20,
+      "n_routed_experts": 8,
+      "n_active_experts": 2,
+      "n_shared_experts": 1,
+      "csa_compress_m": 4,
+      "hca_compress_m": 128,
+      "sliding_window": 128
+    },
+    "train": {
+      "optimizer": "adamw",
+      "lr": 0.0003,
+      "min_lr_ratio": 0.1,
+      "weight_decay": 0.1,
+      "beta1": 0.9,
+      "beta2": 0.95,
+      "grad_clip": 1.0,
+      "warmup_steps": 150,
+      "max_steps": 3000,
+      "batch_size": 24,
+      "eval_interval": 200,
+      "eval_steps": 50,
+      "grad_checkpoint": false,
+      "compile": true,
+      "amp_dtype": "bfloat16",
+      "deterministic": true
+    },
+    "data_path": "corpus.txt",
+    "out_dir": "out",
+    "init_seed": 0,
+    "data_seed": 4,
+    "device": "cuda"
+  },
+  "metrics": {
+    "name": "gpu3090",
+    "init_seed": 0,
+    "data_seed": 4,
+    "params_M": 84.974592,
+    "final_val_loss": 0.9978427886962891,
+    "best_val_loss": 0.9978427886962891,
+    "final_val_bpc": 1.43958284283895,
+    "wall_clock_s": 961.5797350406647,
+    "history": [
+      {
+        "step": 0,
+        "train_loss": 3.4966466426849365,
+        "val_loss": 3.2637078762054443,
+        "lr": 2e-06
+      },
+      {
+        "step": 200,
+        "train_loss": 1.589751958847046,
+        "val_loss": 1.591966152191162,
+        "lr": 0.00029979500471849767
+      },
+      {
+        "step": 400,
+        "train_loss": 1.3280677795410156,
+        "val_loss": 1.3554658889770508,
+        "lr": 0.00029490618004174876
+      },
+      {
+        "step": 600,
+        "train_loss": 1.2296501398086548,
+        "val_loss": 1.2903685569763184,
+        "lr": 0.000283728956412876
+      },
+      {
+        "step": 800,
+        "train_loss": 1.1793910264968872,
+        "val_loss": 1.2159210443496704,
+        "lr": 0.000266804392319881
+      },
+      {
+        "step": 1000,
+        "train_loss": 1.0776394605636597,
+        "val_loss": 1.1632027626037598,
+        "lr": 0.0002449517591097723
+      },
+      {
+        "step": 1200,
+        "train_loss": 1.0782766342163086,
+        "val_loss": 1.122065782546997,
+        "lr": 0.00021922888232815089
+      },
+      {
+        "step": 1400,
+        "train_loss": 1.0682132244110107,
+        "val_loss": 1.098028540611267,
+        "lr": 0.00019088093530970467
+      },
+      {
+        "step": 1600,
+        "train_loss": 1.022497534751892,
+        "val_loss": 1.071752905845642,
+        "lr": 0.00016128016378029814
+      },
+      {
+        "step": 1800,
+        "train_loss": 0.9983124732971191,
+        "val_loss": 1.0510199069976807,
+        "lr": 0.00013185945923599213
+      },
+      {
+        "step": 2000,
+        "train_loss": 1.0085397958755493,
+        "val_loss": 1.0424273014068604,
+        "lr": 0.00010404299662802996
+      },
+      {
+        "step": 2200,
+        "train_loss": 0.9946750998497009,
+        "val_loss": 1.0251481533050537,
+        "lr": 7.917729399165434e-05
+      },
+      {
+        "step": 2400,
+        "train_loss": 0.969336986541748,
+        "val_loss": 1.0179152488708496,
+        "lr": 5.846603123148688e-05
+      },
+      {
+        "step": 2600,
+        "train_loss": 0.9345595836639404,
+        "val_loss": 1.0067423582077026,
+        "lr": 4.2911783305827044e-05
+      },
+      {
+        "step": 2800,
+        "train_loss": 0.9655787348747253,
+        "val_loss": 1.0140701532363892,
+        "lr": 3.326748834529619e-05
+      },
+      {
+        "step": 2999,
+        "train_loss": 0.9443225860595703,
+        "val_loss": 0.9978427886962891,
+        "lr": 3.000008201886483e-05
+      }
+    ]
+  }
+}

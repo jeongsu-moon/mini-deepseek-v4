@@ -33,7 +33,7 @@
       "beta2": 0.95,
       "grad_clip": 1.0,
       "warmup_steps": 50,
-      "max_steps": 120,
+      "max_steps": 500,
       "batch_size": 32,
       "eval_interval": 100,
       "eval_steps": 20,
@@ -45,36 +45,54 @@
     "data_path": "sample.txt",
     "out_dir": "out",
     "init_seed": 0,
-    "data_seed": 2,
-    "device": "cpu"
+    "data_seed": 0,
+    "device": "cuda"
   },
   "metrics": {
     "name": "small",
     "init_seed": 0,
-    "data_seed": 2,
+    "data_seed": 0,
     "params_M": 0.857344,
-    "final_val_loss": 2.3682146072387695,
-    "best_val_loss": 2.3682146072387695,
-    "final_val_bpc": 3.416611469624177,
-    "wall_clock_s": 19.219960927963257,
+    "final_val_loss": 1.0848605632781982,
+    "best_val_loss": 1.0848605632781982,
+    "final_val_bpc": 1.565122954697464,
+    "wall_clock_s": 3.867818593978882,
     "history": [
       {
         "step": 0,
-        "train_loss": 3.593414306640625,
-        "val_loss": 3.5881106853485107,
+        "train_loss": 3.5851268768310547,
+        "val_loss": 3.5887863636016846,
         "lr": 5.999999999999999e-06
       },
       {
         "step": 100,
-        "train_loss": 2.2367825508117676,
-        "val_loss": 2.3983154296875,
-        "lr": 8.082887674907099e-05
+        "train_loss": 2.1109211444854736,
+        "val_loss": 2.338918447494507,
+        "lr": 0.00029185850380609757
       },
       {
-        "step": 119,
-        "train_loss": 2.1818361282348633,
-        "val_loss": 2.3682146072387695,
-        "lr": 3.0135936016922528e-05
+        "step": 200,
+        "train_loss": 1.2755539417266846,
+        "val_loss": 1.8889427185058594,
+        "lr": 0.00023249999999999999
+      },
+      {
+        "step": 300,
+        "train_loss": 0.5911754965782166,
+        "val_loss": 1.432870626449585,
+        "lr": 0.0001415574960149644
+      },
+      {
+        "step": 400,
+        "train_loss": 0.40341416001319885,
+        "val_loss": 1.1929130554199219,
+        "lr": 6.158400017893799e-05
+      },
+      {
+        "step": 499,
+        "train_loss": 0.28101155161857605,
+        "val_loss": 1.0848605632781982,
+        "lr": 3.000328985477171e-05
       }
     ]
   }

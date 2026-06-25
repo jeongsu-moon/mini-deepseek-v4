@@ -15,7 +15,7 @@ import time
 import torch
 
 from config import RunConfig, get_config
-from data import CharDataset
+from data import CharDataset, BPEDataset
 from model import GPT
 
 
@@ -67,7 +67,10 @@ def train_once(cfg: RunConfig, log: bool = True, verbose: bool = True) -> dict:
     cfg.device = device
     set_seed(cfg.init_seed, cfg.train.deterministic)
 
-    dataset = CharDataset(cfg.data_path, cfg.model.block_size, device=device)
+    if cfg.data_format == "bpe":
+        dataset = BPEDataset(cfg.data_path, cfg.model.block_size, device=device)
+    else:
+        dataset = CharDataset(cfg.data_path, cfg.model.block_size, device=device)
     cfg.model.vocab_size = dataset.vocab_size
 
     model = GPT(cfg.model).to(device)
@@ -151,8 +154,9 @@ def train_once(cfg: RunConfig, log: bool = True, verbose: bool = True) -> dict:
 
 def _parse_args():
     p = argparse.ArgumentParser(description="mini-deepseek-v4 baseline trainer")
-    p.add_argument("--config", default="small", help="preset: small | gpu3090")
+    p.add_argument("--config", default="small", help="preset: small | gpu3090 | gpu3090_bpe")
     p.add_argument("--data_path", default=None)
+    p.add_argument("--data_format", default=None, choices=("char", "bpe"))
     p.add_argument("--out_dir", default=None)
     p.add_argument("--init_seed", type=int, default=None)
     p.add_argument("--data_seed", type=int, default=None)
@@ -167,6 +171,7 @@ def main():
     a = _parse_args()
     cfg = get_config(a.config)
     if a.data_path is not None: cfg.data_path = a.data_path
+    if a.data_format is not None: cfg.data_format = a.data_format
     if a.out_dir is not None: cfg.out_dir = a.out_dir
     if a.init_seed is not None: cfg.init_seed = a.init_seed
     if a.data_seed is not None: cfg.data_seed = a.data_seed

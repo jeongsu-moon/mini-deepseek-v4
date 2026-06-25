@@ -1,0 +1,159 @@
+{
+  "config": {
+    "name": "gpu3090",
+    "model": {
+      "vocab_size": 27,
+      "n_layer": 12,
+      "n_head": 12,
+      "n_embd": 768,
+      "head_dim": 64,
+      "mlp_ratio": 2.6666666666666665,
+      "block_size": 1024,
+      "rope_theta": 10000.0,
+      "rms_eps": 1e-05,
+      "tie_embeddings": true,
+      "attn_type": "full",
+      "ffn_type": "mlp",
+      "residual_type": "standard",
+      "n_hc": 4,
+      "sinkhorn_iters": 20,
+      "n_routed_experts": 8,
+      "n_active_experts": 2,
+      "n_shared_experts": 1,
+      "csa_compress_m": 4,
+      "hca_compress_m": 128,
+      "sliding_window": 128
+    },
+    "train": {
+      "optimizer": "adamw",
+      "lr": 0.0003,
+      "min_lr_ratio": 0.1,
+      "weight_decay": 0.1,
+      "beta1": 0.9,
+      "beta2": 0.95,
+      "grad_clip": 1.0,
+      "warmup_steps": 150,
+      "max_steps": 3000,
+      "batch_size": 24,
+      "eval_interval": 200,
+      "eval_steps": 50,
+      "grad_checkpoint": false,
+      "compile": true,
+      "amp_dtype": "bfloat16",
+      "deterministic": true
+    },
+    "data_path": "corpus.txt",
+    "out_dir": "out",
+    "init_seed": 1,
+    "data_seed": 0,
+    "device": "cuda"
+  },
+  "metrics": {
+    "name": "gpu3090",
+    "init_seed": 1,
+    "data_seed": 0,
+    "params_M": 84.974592,
+    "final_val_loss": 1.0028283596038818,
+    "best_val_loss": 1.0028283596038818,
+    "final_val_bpc": 1.4467755012633345,
+    "wall_clock_s": 958.9869022369385,
+    "history": [
+      {
+        "step": 0,
+        "train_loss": 3.5682296752929688,
+        "val_loss": 3.3436598777770996,
+        "lr": 2e-06
+      },
+      {
+        "step": 200,
+        "train_loss": 1.5587514638900757,
+        "val_loss": 1.5723272562026978,
+        "lr": 0.00029979500471849767
+      },
+      {
+        "step": 400,
+        "train_loss": 1.3423017263412476,
+        "val_loss": 1.3621551990509033,
+        "lr": 0.00029490618004174876
+      },
+      {
+        "step": 600,
+        "train_loss": 1.2508903741836548,
+        "val_loss": 1.2879945039749146,
+        "lr": 0.000283728956412876
+      },
+      {
+        "step": 800,
+        "train_loss": 1.1969552040100098,
+        "val_loss": 1.2122304439544678,
+        "lr": 0.000266804392319881
+      },
+      {
+        "step": 1000,
+        "train_loss": 1.1735568046569824,
+        "val_loss": 1.1512095928192139,
+        "lr": 0.0002449517591097723
+      },
+      {
+        "step": 1200,
+        "train_loss": 1.0966863632202148,
+        "val_loss": 1.1274244785308838,
+        "lr": 0.00021922888232815089
+      },
+      {
+        "step": 1400,
+        "train_loss": 1.0481789112091064,
+        "val_loss": 1.0909556150436401,
+        "lr": 0.00019088093530970467
+      },
+      {
+        "step": 1600,
+        "train_loss": 1.059880018234253,
+        "val_loss": 1.0661653280258179,
+        "lr": 0.00016128016378029814
+      },
+      {
+        "step": 1800,
+        "train_loss": 1.0048638582229614,
+        "val_loss": 1.0518958568572998,
+        "lr": 0.00013185945923599213
+      },
+      {
+        "step": 2000,
+        "train_loss": 1.0001561641693115,
+        "val_loss": 1.040298581123352,
+        "lr": 0.00010404299662802996
+      },
+      {
+        "step": 2200,
+        "train_loss": 1.0093822479248047,
+        "val_loss": 1.0318610668182373,
+        "lr": 7.917729399165434e-05
+      },
+      {
+        "step": 2400,
+        "train_loss": 0.9969993829727173,
+        "val_loss": 1.016797661781311,
+        "lr": 5.846603123148688e-05
+      },
+      {
+        "step": 2600,
+        "train_loss": 0.935781717300415,
+        "val_loss": 1.0135170221328735,
+        "lr": 4.2911783305827044e-05
+      },
+      {
+        "step": 2800,
+        "train_loss": 0.9410974383354187,
+        "val_loss": 1.013045072555542,
+        "lr": 3.326748834529619e-05
+      },
+      {
+        "step": 2999,
+        "train_loss": 0.9655134081840515,
+        "val_loss": 1.0028283596038818,
+        "lr": 3.000008201886483e-05
+      }
+    ]
+  }
+}

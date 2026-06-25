@@ -19,6 +19,7 @@ ATTN_TYPES = ("full", "csa", "hca")
 FFN_TYPES = ("mlp", "moe")
 RESIDUAL_TYPES = ("standard", "mhc")
 OPTIM_TYPES = ("adamw", "muon")
+DATA_FORMATS = ("char", "bpe")     # char-level (Step 1) vs BPE multi-domain (Step 2+)
 
 
 @dataclass
@@ -92,10 +93,15 @@ class RunConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     data_path: str = "sample.txt"
+    data_format: str = "char"       # 'char' -> CharDataset; 'bpe' -> BPEDataset(manifest.json)
     out_dir: str = "out"
     init_seed: int = 0              # seeds weight init + dropout + CUDA RNG
     data_seed: int = 0              # seeds batch sampling order (independent axis)
     device: str = "cuda"
+
+    def __post_init__(self):
+        if self.data_format not in DATA_FORMATS:
+            raise ValueError(f"data_format must be one of {DATA_FORMATS}, got {self.data_format!r}")
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -130,7 +136,18 @@ def _gpu3090() -> RunConfig:
     )
 
 
-_PRESETS = {"small": _small, "gpu3090": _gpu3090}
+def _gpu3090_bpe() -> RunConfig:
+    # Step 2: same ~85M dense baseline, but on the BPE multi-domain corpus.
+    # vocab_size is set at runtime from data/manifest.json (16k). Retrain the
+    # baseline here once the tokenizer is frozen (ROADMAP §2).
+    cfg = _gpu3090()
+    cfg.name = "gpu3090_bpe"
+    cfg.data_path = "data/manifest.json"
+    cfg.data_format = "bpe"
+    return cfg
+
+
+_PRESETS = {"small": _small, "gpu3090": _gpu3090, "gpu3090_bpe": _gpu3090_bpe}
 
 
 def get_config(name: str = "small") -> RunConfig:

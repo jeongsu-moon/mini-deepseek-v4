@@ -10,6 +10,18 @@ venv/
 env/
 .ipynb_checkpoints/
 
+# large training corpora (fetch locally; do not commit — sample.txt is the only tracked text)
+corpus.txt
+text8
+*.corpus
+# Step 2 multi-domain corpus: raw text, .bin token shards, manifest
+data/
+# Step 2 BPE tokenizer (regenerate via train_tokenizer.py)
+tokenizer.json
+
+# transient console logs (the structured .json logs in out/<name>/ are the real records)
+out/*.log
+
 # os / editor
 .DS_Store
 *.swp

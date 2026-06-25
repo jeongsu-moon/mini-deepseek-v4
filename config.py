@@ -49,6 +49,14 @@ class ModelConfig:
     csa_compress_m: int = 4         # verified V4 value: 4
     hca_compress_m: int = 128       # verified V4 value (m'): 128
     sliding_window: int = 128       # verified V4 value (n_win): 128
+    # CSA Lightning Indexer (toy values; verified V4: topk Pro=1024/Flash=512,
+    # index_n_heads=64, index_head_dim=128). compress_rope_theta/partial_rotary are
+    # the verified V4 rope settings for the compressed branches.
+    index_topk: int = 64
+    index_n_heads: int = 4
+    index_head_dim: int = 32
+    compress_rope_theta: float = 160000.0
+    partial_rotary_factor: float = 0.5   # fraction of head_dim that gets RoPE (V4: 64/512)
 
     def __post_init__(self):
         if self.attn_type not in ATTN_TYPES:

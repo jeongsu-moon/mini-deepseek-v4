@@ -125,11 +125,92 @@ BASELINE_CASES = [
 
 
 # ---------------------------------------------------------------------------
-# V4-component cases (PENDING — wired now, filled in Steps 3-7)
+# V4 attention parity (Step 3): our CSA/HCA compressors + Lightning Indexer vs the
+# transformers deepseek_v4 reference (pinned 9ded3dbbfc). Copy the reference's
+# weights into our module, feed identical inputs, require max-abs < 1e-4. These run
+# only when deepseek_v4 is importable (otherwise skipped, not failed).
+# ---------------------------------------------------------------------------
+def _v4_aligned():
+    """Tiny DeepseekV4Config + matching ModelConfig + shared random inputs."""
+    from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
+    import components.attention as A
+    HID, HD, NH, QLORA = 64, 32, 2, 48
+    M_CSA, M_HCA, IDX_H, IDX_D, IDX_K = 4, 8, 4, 16, 8
+    ref_cfg = DeepseekV4Config(
+        vocab_size=256, hidden_size=HID, num_hidden_layers=2, num_attention_heads=NH,
+        num_key_value_heads=1, head_dim=HD, q_lora_rank=QLORA, index_n_heads=IDX_H,
+        index_head_dim=IDX_D, index_topk=IDX_K, sliding_window=16, partial_rotary_factor=0.5,
+        rms_norm_eps=1e-6, max_position_embeddings=512,
+        compress_rates={"compressed_sparse_attention": M_CSA, "heavily_compressed_attention": M_HCA},
+    )
+    mc = ModelConfig(vocab_size=256, n_layer=2, n_head=NH, n_embd=HID, head_dim=HD,
+                     rms_eps=1e-6, csa_compress_m=M_CSA, hca_compress_m=M_HCA,
+                     index_n_heads=IDX_H, index_head_dim=IDX_D, index_topk=IDX_K,
+                     compress_rope_theta=160000.0, partial_rotary_factor=0.5)
+    g = torch.Generator().manual_seed(0)
+    hidden = torch.randn(1, 64, HID, generator=g)
+    q_res = torch.randn(1, 64, QLORA, generator=g)
+    return ref_cfg, mc, A, hidden, q_res, torch.arange(64)[None]
+
+
+def _randomize(mod, seed=1):
+    g = torch.Generator().manual_seed(seed)
+    for p in mod.parameters():
+        p.data = torch.randn(p.shape, generator=g)
+
+
+def _copy(ours, ref, names):
+    for n in names:
+        ours.get_parameter(n).data.copy_(ref.get_parameter(n))
+    ours.rope.inv_freq.copy_(ref.rotary_emb.compress_inv_freq.float())
+
+
+_POOL_PARAMS = ["kv_proj.weight", "gate_proj.weight", "position_bias", "kv_norm.weight"]
+
+
+def case_hca_compressor() -> dict:
+    from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4HCACompressor
+    ref_cfg, mc, A, hidden, q_res, pos = _v4_aligned()
+    ref = DeepseekV4HCACompressor(ref_cfg).float().eval(); _randomize(ref)
+    ours = A.HCACompressor(mc).float().eval(); _copy(ours, ref, _POOL_PARAMS)
+    with torch.no_grad():
+        r, _ = ref(hidden, q_res, pos, None, 0)
+        o, _ = ours(hidden, pos)
+    return compare("HCA compressor vs deepseek_v4", o, r, atol=1e-4)
+
+
+def case_csa_compressor() -> dict:
+    from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4CSACompressor
+    ref_cfg, mc, A, hidden, q_res, pos = _v4_aligned()
+    ref = DeepseekV4CSACompressor(ref_cfg).float().eval(); _randomize(ref)
+    ours = A.CSACompressor(mc).float().eval(); _copy(ours, ref, _POOL_PARAMS)
+    with torch.no_grad():
+        r, _ = ref(hidden, q_res, pos, None, 0)         # compare pooling (compressed_kv) only
+        o, _ = ours(hidden, hidden, pos)
+    return compare("CSA compressor vs deepseek_v4", o, r, atol=1e-4)
+
+
+def case_lightning_indexer() -> dict:
+    from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4Indexer
+    ref_cfg, mc, A, hidden, q_res, pos = _v4_aligned()
+    ref = DeepseekV4Indexer(ref_cfg).float().eval(); _randomize(ref)
+    ours = A.LightningIndexer(mc, q_src_dim=48).float().eval()
+    _copy(ours, ref, _POOL_PARAMS + ["q_b_proj.weight", "weights_proj.weight"])
+    with torch.no_grad():
+        r = ref(hidden, q_res, pos, None, 0)
+        o = ours(hidden, q_res, pos, 64 // mc.csa_compress_m)
+    frac = (r.sort(-1).values == o.sort(-1).values).float().mean().item()   # exact top-k set match
+    return {"name": "Lightning Indexer top-k vs deepseek_v4", "max_abs": 1.0 - frac,
+            "mean_abs": 1.0 - frac, "atol": 0.0, "passed": frac == 1.0}
+
+
+V4_ATTN_CASES = [case_hca_compressor, case_csa_compressor, case_lightning_indexer]
+
+
+# ---------------------------------------------------------------------------
+# Still-pending V4 components (filled in Steps 4-7)
 # ---------------------------------------------------------------------------
 PENDING_CASES = {
-    "csa":  lambda: ModelConfig(attn_type="csa"),
-    "hca":  lambda: ModelConfig(attn_type="hca"),
     "moe":  lambda: ModelConfig(ffn_type="moe"),
     "mhc":  lambda: ModelConfig(residual_type="mhc"),
 }
@@ -168,6 +249,21 @@ def main():
         except Exception as e:                                # noqa: BLE001
             failed += 1
             print(f"  [ERR ] {fn.__name__}: {e}")
+
+    print("\n--- V4 attention parity (Step 3: CSA/HCA/indexer vs deepseek_v4) ---")
+    if "deepseek_v4 present" in probe_transformers():
+        for fn in V4_ATTN_CASES:
+            try:
+                r = fn()
+                tag = "PASS" if r["passed"] else "FAIL"
+                if not r["passed"]:
+                    failed += 1
+                print(f"  [{tag}] {r['name']:42s} max_abs={r['max_abs']:.2e} (atol {r['atol']:.0e})")
+            except Exception as e:                            # noqa: BLE001
+                failed += 1
+                print(f"  [ERR ] {fn.__name__}: {type(e).__name__}: {e}")
+    else:
+        print("  [SKIP] deepseek_v4 not importable — pin transformers per requirements.txt")
 
     print("\n--- V4 component cases (pending) ---")
     for key, make_cfg in PENDING_CASES.items():

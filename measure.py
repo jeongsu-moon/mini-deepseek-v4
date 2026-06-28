@@ -393,6 +393,42 @@ def step7(seeds):
         print(f"  -> PTQ degrades by {gap:+.4f}; QAT-FP4 recovers {rec:.0%} of that gap. Full study")
         print("     tunes PTQ calibration (no strawman), adds seeds>=3 + the >2σ gate (§7).")
 
+    # --- DEEPENING: controlled critical-path probe (FP4 unavoidable, no escape path) ---
+    import torch.nn.functional as F
+    print("\n  (deepening) controlled probe — FP4 on the CRITICAL path (a small MLP fits a nonlinear")
+    print("  teacher; both layers fake-quant). Removes the full model's fp32 escape routes:")
+    from components.quant import fp4_fake_quant
+    torch.manual_seed(0)
+    d, h = 128, 256
+    T1 = torch.randn(h, d, device=dev) / d ** 0.5
+    T2 = torch.randn(d, h, device=dev) / h ** 0.5
+    def _data(n):
+        x = torch.randn(n, d, device=dev); return x, (F.gelu(x @ T1.T) @ T2.T)
+    def _fit(qat, lr=1e-3, steps=1500):
+        W1 = torch.nn.Parameter(torch.randn(h, d, device=dev) / d ** 0.5)
+        W2 = torch.nn.Parameter(torch.randn(d, h, device=dev) / h ** 0.5)
+        opt = torch.optim.Adam([W1, W2], lr=lr)
+        for _ in range(steps):
+            x, y = _data(256)
+            q1 = fp4_fake_quant(W1, ste=True) if qat else W1
+            q2 = fp4_fake_quant(W2, ste=True) if qat else W2
+            ((F.gelu(x @ q1.T) @ q2.T - y) ** 2).mean().backward(); opt.step(); opt.zero_grad()
+        return W1.detach(), W2.detach()
+    def _mse(Ws, q):
+        W1, W2 = Ws; x, y = _data(8192)
+        q1 = fp4_fake_quant(W1, ste=False) if q else W1
+        q2 = fp4_fake_quant(W2, ste=False) if q else W2
+        return ((F.gelu(x @ q1.T) @ q2.T - y) ** 2).mean().item()
+    Wp = _fit(False); c_fp32, c_ptq = _mse(Wp, False), _mse(Wp, True)
+    c_qat = _mse(_fit(True), True)
+    print(f"    fp32={c_fp32:.4f}  PTQ-FP4={c_ptq:.4f} (gap {c_ptq-c_fp32:+.4f})  QAT-FP4={c_qat:.4f}"
+          f"  QAT recovers {100*(c_ptq-c_qat)/(c_ptq-c_fp32):+.0f}%")
+    print("    -> on the critical path FP4 DOES introduce a real gap (unlike the escape-routed full")
+    print("       model), but naive STE-QAT does NOT recover it at toy scale (can be worse). HONEST")
+    print("       §7 verdict: the QAT>PTQ ADVANTAGE is regime+technique-gated — it needs large quant")
+    print("       error vs task slack, capacity pressure, and tuned scales/clipping, none present")
+    print("       here. The PRIMITIVE (E2M1 + STE) is parity-correct; the advantage is not toy-scale.")
+
 
 # ---------------------------------------------------------------------------
 # Step 8: closing top-down reprofile + attribution ledger (close the loop, ROADMAP §8)

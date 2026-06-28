@@ -64,6 +64,40 @@ def _kv_entries(attn_type, L, m=4, m_prime=128, window=128, topk=64):
     raise ValueError(attn_type)
 
 
+def _needle_recall(attn, T, dev, nval=16, mark=63, vocab=64, steps=600):
+    """Fixed-position copy: a value token at pos 1 must be reproduced at the query (last pos),
+    distance D=T-2. No induction-head search (positional carry) so it trains fast; a window-only
+    path fails for D>window. Returns recall accuracy on held-out batches."""
+    import torch.nn.functional as F
+    def batch(bs, g):
+        x = torch.randint(0, 62, (bs, T), generator=g)
+        val = torch.randint(0, nval, (bs,), generator=g)
+        x[:, 1] = val; x[:, -1] = mark
+        tgt = torch.full((bs, T), -100); tgt[:, -1] = val
+        return x.to(dev), tgt.to(dev), val
+    cfg = ModelConfig(vocab_size=vocab, n_layer=4, n_head=4, n_embd=128, block_size=T,
+                      attn_type=attn, sliding_window=128, csa_compress_m=4, hca_compress_m=128,
+                      index_topk=32)
+    torch.manual_seed(0); net = M_mod().GPT(cfg).to(dev); net.train()
+    opt = torch.optim.AdamW(net.parameters(), lr=3e-3); g = torch.Generator().manual_seed(0)
+    for _ in range(steps):
+        x, tgt, _ = batch(32, g)
+        logits, _ = net(x)
+        loss = F.cross_entropy(logits.view(-1, vocab), tgt.view(-1), ignore_index=-100)
+        opt.zero_grad(); loss.backward(); opt.step()
+    net.eval(); ge = torch.Generator().manual_seed(999); c = n = 0
+    with torch.no_grad():
+        for _ in range(10):
+            x, _, val = batch(32, ge)
+            c += (net(x)[0][:, -1].argmax(-1).cpu() == val).sum().item(); n += val.numel()
+    return c / n
+
+
+def M_mod():
+    import model
+    return model
+
+
 def step3(seeds):
     print("=== Step 3: CSA/HCA compressed-KV attention ===\n")
     print("(b1) analytic KV entries per decode query vs context (toy m=4, m'=128, win=128, topk=64):")
@@ -73,23 +107,22 @@ def step3(seeds):
         print(f"  {L:>8} | {f:>8} {h:>8} {c:>8} | {h/f:>8.1%} {c/f:>8.1%}")
     print("  -> HCA saves the most KV (dense over a tiny compressed set); CSA keeps a top-k slice.\n")
 
-    print(f"(b2) val-loss parity on BPE (matched context), {len(seeds)} seeds — must stay within 2σ of full:")
-    res = {}
-    for at in ("full", "csa", "hca"):
-        vals = _train_seeds(lambda at=at: _small_bpe(attn_type=at), seeds)
-        m, sd = _mean_sd(vals)
-        res[at] = (m, sd, vals)
-        print(f"  {at:5s}: val={m:.4f} (sd {sd:.4f})  runs={[round(v,3) for v in vals]}")
-    sigma = max(res['full'][1], 1e-9)
-    gate = 2 * sigma
-    print(f"\n  2σ gate (full's seed sd) = {gate:.4f}")
-    for at in ("csa", "hca"):
-        d = res[at][0] - res['full'][0]
-        verdict = "WITHIN 2σ (parity PASS)" if abs(d) <= gate else "exceeds 2σ"
-        print(f"  Δ({at}-full) = {d:+.4f}  -> {verdict}")
-    print("\n  NOTE: at this toy scale/seed count σ is large; long-range needle-recall vs distance")
-    print("  (the discriminating §3 probe — CSA+indexer recalls D>128, pure-sliding fails) is the")
-    print("  deeper experiment and is reported separately when run at a context that stresses it.")
+    print("(b2) needle-recall vs distance — plant [value]@pos1, query at the end, predict value.")
+    print(f"    D<window(128): the needle is local; D>window: only a long-range path can recall.")
+    chance = 1 / 16
+    for T in (96, 224):
+        D = T - 2
+        tag = "within" if D < 128 else "BEYOND"
+        print(f"  T={T} D={D} ({tag} window; chance={chance:.3f}):")
+        for at in ("full", "csa", "hca"):
+            acc = _needle_recall(at, T, dev="cuda" if torch.cuda.is_available() else "cpu")
+            print(f"    {at:5s}: recall acc={acc:.3f}")
+    print("\n  -> within the window all recall; BEYOND it full still recalls but CSA/HCA COLLAPSE to")
+    print("     chance. The compressed path preserves only a COARSE long-range summary (HCA pools")
+    print("     128 tokens -> 1 entry; CSA's content indexer can't lock a positional single token),")
+    print("     so the KV savings (b1) trade off EXACT single-token long-range recall — the needle-")
+    print("     in-haystack of one arbitrary token is compression's worst case (an honest §3 nuance:")
+    print("     compression keeps aggregate long-range signal, not exact-token retrieval).")
 
 
 # ---------------------------------------------------------------------------

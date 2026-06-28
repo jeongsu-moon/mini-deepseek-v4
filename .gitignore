@@ -27,3 +27,6 @@ out/*.log
 *.swp
 .idea/
 .vscode/
+
+# local env / secrets (machine-specific PYTHONPATH, API keys, etc.)
+.env

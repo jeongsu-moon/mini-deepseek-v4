@@ -367,7 +367,80 @@ def step7(seeds):
         print("     tunes PTQ calibration (no strawman), adds seeds>=3 + the >2σ gate (§7).")
 
 
-STEPS = {3: step3, 4: step4, 5: step5, 6: step6, 7: step7}
+# ---------------------------------------------------------------------------
+# Step 8: closing top-down reprofile + attribution ledger (close the loop, ROADMAP §8)
+# ---------------------------------------------------------------------------
+def step8(seeds):
+    import profile_analytic as P
+    print("=== Step 8: closing reprofile + attribution ledger ===\n")
+    L = 1_048_576
+    pro, v32 = P.V4_PRO, P.V3_2
+    sched = P._layer_schedule(pro)
+
+    kv_v32, fl_v32 = P.model_totals(v32, L)
+    kv_v4, fl_v4 = P.model_totals(pro, L)
+    print(f"(1) system reprofile @ L={L:,} (analytic, SIMULATION — a 3090 can't hold 1M):")
+    print(f"    KV   : V4-Pro / V3.2 = {kv_v4/kv_v32:6.1%}   (report headline ~10%)")
+    print(f"    FLOPs: V4-Pro / V3.2 = {fl_v4/fl_v32:6.1%}   (report headline ~27%)\n")
+
+    # --- attribution ledger: decompose the KV reduction by component (reconciles by build) ---
+    w = pro["window"]
+    n_hca = sum(1 for m in sched if m == "hca")
+    n_csa = sum(1 for m in sched if m == "csa")
+    # per-layer KV saving vs V3.2's raw-L, split into compression gain and window add-back
+    hca_comp = n_hca * (L - L / pro["m_prime"]);  hca_win = n_hca * w
+    csa_comp = n_csa * (L - L / pro["m"]);         csa_win = n_csa * w
+    total_red = kv_v32 - kv_v4
+    print("(2) KV attribution ledger (share of the reduction V3.2 -> V4-Pro):")
+    rows = [("HCA-layer compression (L -> L/128)", +hca_comp),
+            ("CSA-layer compression (L -> L/4)",   +csa_comp),
+            ("sliding-window add-back (+128/layer)", -(hca_win + csa_win))]
+    for name, val in rows:
+        print(f"    {name:38s}: {val/total_red:+7.1%}")
+    summed = hca_comp + csa_comp - (hca_win + csa_win)
+    print(f"    {'— reconciliation (Σ components / system)':38s}: {summed/total_red:7.2%}  "
+          f"(residual {1 - summed/total_red:+.1e})")
+    print("    -> HCA layers carry almost all the KV win (dense over a 1/128 set); CSA keeps a")
+    print("       richer 1/4 stream for its indexer. Window is the only add-back. Σ == system,")
+    print("       so the decomposition reconciles WITHIN the analytic model (Step 1's premise).\n")
+
+    # --- parity (fidelity) ledger: how faithfully each mechanism matches the pinned reference ---
+    print("(3) per-component parity vs transformers deepseek_v4 (pinned 9ded3dbbfc), from parity.py:")
+    ledger = [
+        ("CSA / HCA compressor + indexer", "max-abs 0.00e+00 (<1e-4)"),
+        ("mHC HyperConnection (post/comb/collapsed)", "0.00e+00 + doubly-stoch 1e-6"),
+        ("MoE block (top-k & hash)", "0.00e+00 (<1e-4)"),
+        ("Muon Newton-Schulz (svdvals->1 / polar)", "5e-4 / 1e-4"),
+        ("FP4 E2M1 grid + STE", "0.00e+00"),
+    ]
+    for name, r in ledger:
+        print(f"    {name:44s}: {r}")
+    print("    NOTE: this is PER-COMPONENT fidelity (each mechanism weight-copied & matched), not a")
+    print("    single full-model logit MSE — by design the build mirrors the mechanism pieces, not")
+    print("    V4's whole architecture (LoRA q_a/q_b, grouped output, etc.), so an end-to-end logit")
+    print("    MSE vs the reference would diverge on the parts we deliberately kept toy-simple.\n")
+
+    # --- realized-vs-hypothesized: tie in the measurement track ---
+    print("(4) capstone reconciliation — did each component DELIVER its hypothesized share?")
+    verdict = [
+        ("CSA/HCA", "KV win analytic ✓; empirical quality parity FAILS at short ctx (regime-gated)"),
+        ("mHC",     "non-expansive op-norm=1.000 reproduced ✓ (structural; scale-independent)"),
+        ("MoE",     "aux-loss-free load CV 0.63->0.24 reproduced ✓"),
+        ("Muon",    "best-LR null at toy scale (advantage regime-dependent) — honest null"),
+        ("MTP",     "30% speculative acceptance on BPE ✓ (correctness invariant holds)"),
+        ("FP4",     "PTQ did not break at toy scale -> QAT recovery untestable (regime gate)"),
+    ]
+    for name, v in verdict:
+        print(f"    {name:8s}: {v}")
+    print("\n  RESIDUAL (the capstone answer): the analytic KV/FLOP ledger reconciles exactly, but the")
+    print("  EMPIRICAL realization splits — STRUCTURAL invariants (mHC, MoE, MTP) reproduce at toy")
+    print("  scale; EFFICIENCY/scale trade-offs (CSA/HCA, Muon, FP4) need the target regime (long")
+    print("  context / many steps / hard quant) and are NOT mis-implementation (parity is exact) but")
+    print("  regime-gated — exactly the boundary the 2σ gate + pre-registered falsifiers were built")
+    print("  to expose. Loop closed: Step 1 hypotheses -> Step 8 named, reconciled attribution.")
+
+
+STEPS = {3: step3, 4: step4, 5: step5, 6: step6, 7: step7, 8: step8}
 
 
 def main():

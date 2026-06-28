@@ -180,6 +180,10 @@ class GPT(nn.Module):
         if config.residual_type in ("hc", "mhc"):
             from components.residual import HyperHead
             self.hc_head = HyperHead(config)               # collapse streams -> one sequence
+        self.mtp_depth = config.mtp_depth
+        if config.mtp_depth > 0:
+            from components.mtp import MTP
+            self.mtp = MTP(config)                         # multi-token prediction (Step 6 +MTP)
         self.norm_f = RMSNorm(config.n_embd, config.rms_eps)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         if config.tie_embeddings:
@@ -218,7 +222,8 @@ class GPT(nn.Module):
             raise ValueError(f"sequence length {T} > block_size {self.config.block_size}")
         cos = self.rope_cos[:T].to(idx.device)
         sin = self.rope_sin[:T].to(idx.device)
-        x = self.tok_emb(idx)
+        emb = self.tok_emb(idx)
+        x = emb
         if self.residual_type in ("hc", "mhc"):            # expand into n_hc parallel streams
             x = x.unsqueeze(2).expand(-1, -1, self.config.n_hc, -1).contiguous()
         for block in self.blocks:
@@ -228,6 +233,7 @@ class GPT(nn.Module):
                 x = block(x, cos, sin, idx)
         if self.residual_type in ("hc", "mhc"):            # collapse streams -> [B, T, D]
             x = self.hc_head(x)
+        h0 = x                                             # trunk hidden (pre-final-norm) for MTP
         x = self.norm_f(x)
         logits = self.lm_head(x)
         loss = None
@@ -235,6 +241,8 @@ class GPT(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
             if self.config.ffn_type == "moe":             # + sequence-wise balance loss (Step 5)
                 loss = loss + self._moe_balance_loss(B)
+            if self.mtp_depth > 0:                         # + multi-token prediction loss (Step 6)
+                loss = loss + self.mtp.loss(emb, h0, idx, cos, sin, self.norm_f, self.lm_head)
         return logits, loss
 
     def _moe_balance_loss(self, batch_seq: int) -> torch.Tensor:
@@ -247,6 +255,50 @@ class GPT(nn.Module):
             moe = block.ffn
             total = total + moe.balance_loss_coef * moe.balance_loss(batch_seq)
         return total
+
+    @torch.no_grad()
+    def _trunk(self, idx):
+        """Run the trunk and return (emb, h0, logits, cos, sin) — forward() without the
+        loss, reused by self-speculative decoding. h0 is the pre-final-norm hidden."""
+        B, T = idx.shape
+        cos = self.rope_cos[:T].to(idx.device)
+        sin = self.rope_sin[:T].to(idx.device)
+        emb = self.tok_emb(idx)
+        x = emb
+        if self.residual_type in ("hc", "mhc"):
+            x = x.unsqueeze(2).expand(-1, -1, self.config.n_hc, -1).contiguous()
+        for block in self.blocks:
+            x = block(x, cos, sin, idx)
+        if self.residual_type in ("hc", "mhc"):
+            x = self.hc_head(x)
+        h0 = x
+        logits = self.lm_head(self.norm_f(x))
+        return emb, h0, logits, cos, sin
+
+    @torch.no_grad()
+    def generate_speculative(self, idx, max_new_tokens):
+        """Depth-1 self-speculative greedy decoding (Step 6 +MTP). Each step: the trunk emits
+        the main greedy token g0, the MTP head DRAFTS the next-next token d1, and one verify
+        pass checks d1 against the trunk's own argmax. The emitted sequence is IDENTICAL to
+        plain greedy (drafts are only accepted when they match the target's argmax); returns
+        (idx, accepted, drafted) so acceptance rate can be measured. Use batch size 1."""
+        assert self.mtp_depth > 0, "generate_speculative needs mtp_depth > 0"
+        start = idx.shape[1]
+        accepted = drafted = 0
+        while idx.shape[1] - start < max_new_tokens:
+            emb, h0, logits, cos, sin = self._trunk(idx)
+            g0 = logits[:, -1].argmax(-1, keepdim=True)               # main greedy next token
+            d1 = self.mtp.draft_next(h0[:, -1:], self.tok_emb(g0),
+                                     cos[-1:], sin[-1:], self.norm_f, self.lm_head).unsqueeze(1)
+            _, _, vlogits, _, _ = self._trunk(torch.cat([idx, g0, d1], dim=1))
+            v1 = vlogits[:, -2].argmax(-1, keepdim=True)              # true token following g0
+            drafted += 1
+            if torch.equal(d1, v1):                                   # draft matched -> 2 tokens
+                accepted += 1
+                idx = torch.cat([idx, g0, v1], dim=1)
+            else:                                                     # reject draft, keep verified
+                idx = torch.cat([idx, g0, v1], dim=1)
+        return idx, accepted, drafted
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):

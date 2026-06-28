@@ -342,6 +342,46 @@ def case_newton_schulz_polar() -> dict:
 V4_OPTIM_CASES = [case_newton_schulz_orthogonality, case_newton_schulz_polar]
 
 
+# ---------------------------------------------------------------------------
+# V4 MTP verification (Step 6 "+MTP"): no transformers reference (HF drops mtp.* on load),
+# so check the behavioural invariants — a finite MTP training loss, and that greedy
+# self-speculative decoding emits EXACTLY the plain-greedy sequence (drafts are accepted
+# only when they match the target's own argmax). Pure torch.
+# ---------------------------------------------------------------------------
+def _mtp_net():
+    set_strict_deterministic(0)
+    cfg = ModelConfig(vocab_size=37, n_layer=2, n_head=2, n_embd=32, block_size=64, mtp_depth=1)
+    return M.GPT(cfg)
+
+
+def case_mtp_loss() -> dict:
+    net = _mtp_net()
+    idx = torch.randint(0, 37, (2, 16), generator=torch.Generator().manual_seed(1))
+    _, loss = net(idx, idx)
+    loss.backward()                                          # must produce finite grads
+    finite = bool(torch.isfinite(loss)) and all(
+        torch.isfinite(p.grad).all() for p in net.parameters() if p.grad is not None)
+    return {"name": "MTP loss finite + backprops", "max_abs": 0.0 if finite else 1.0,
+            "mean_abs": 0.0, "atol": 0.0, "passed": finite}
+
+
+def case_mtp_speculative() -> dict:
+    net = _mtp_net().eval()
+    prompt = torch.randint(0, 37, (1, 8), generator=torch.Generator().manual_seed(2))
+    greedy = prompt.clone()
+    for _ in range(12):                                      # plain greedy autoregressive
+        logits, _ = net(greedy)
+        greedy = torch.cat([greedy, logits[:, -1].argmax(-1, keepdim=True)], dim=1)
+    spec, acc, drafted = net.generate_speculative(prompt.clone(), 12)
+    n = min(greedy.shape[1], spec.shape[1])
+    match = torch.equal(greedy[:, :n], spec[:, :n])
+    return {"name": f"MTP speculative == greedy [acc {acc}/{drafted}]",
+            "max_abs": 0.0 if match else 1.0, "mean_abs": 0.0, "atol": 0.0, "passed": match}
+
+
+V4_MTP_CASES = [case_mtp_loss, case_mtp_speculative]
+
+
 def probe_transformers() -> str:
     try:
         import transformers
@@ -423,6 +463,18 @@ def main():
 
     print("\n--- V4 optimizer parity (Step 6: Muon Newton-Schulz orthogonalization) ---")
     for fn in V4_OPTIM_CASES:
+        try:
+            r = fn()
+            tag = "PASS" if r["passed"] else "FAIL"
+            if not r["passed"]:
+                failed += 1
+            print(f"  [{tag}] {r['name']:42s} max_abs={r['max_abs']:.2e} (atol {r['atol']:.0e})")
+        except Exception as e:                                # noqa: BLE001
+            failed += 1
+            print(f"  [ERR ] {fn.__name__}: {type(e).__name__}: {e}")
+
+    print("\n--- V4 MTP verification (Step 6 +MTP: multi-token prediction / self-speculative) ---")
+    for fn in V4_MTP_CASES:
         try:
             r = fn()
             tag = "PASS" if r["passed"] else "FAIL"

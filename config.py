@@ -59,6 +59,11 @@ class ModelConfig:
     n_hash_layers: int = 3              # first N MoE layers route via frozen tid2eid
     balance_loss_coef: float = 1e-3     # sequence-wise balance loss weight
     bias_update_rate: float = 1e-3      # aux-loss-free controller step (sign rule, no grad)
+    # MTP (Step 6, "+MTP") — V3-identical multi-token prediction (NOT a V4 invention).
+    # mtp_depth = num_nextn_predict_layers (0 = off); each depth k predicts token t+1+k for
+    # self-speculative decoding. Acceptance is meaningful on BPE only (ROADMAP §6).
+    mtp_depth: int = 0
+    mtp_loss_coef: float = 0.3
     csa_compress_m: int = 4         # verified V4 value: 4
     hca_compress_m: int = 128       # verified V4 value (m'): 128
     sliding_window: int = 128       # verified V4 value (n_win): 128

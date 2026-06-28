@@ -317,6 +317,31 @@ def case_moe_hash() -> dict:
 V4_MOE_CASES = [case_moe_topk, case_moe_hash]
 
 
+# ---------------------------------------------------------------------------
+# V4 optimizer parity (Step 6): Muon's Newton-Schulz orthogonalization. No transformers
+# cross-check — the spec IS the invariant: NS(G) is the polar factor U V^T, so its singular
+# values collapse to 1 (orthogonal update). Pure torch, runs unconditionally.
+# ---------------------------------------------------------------------------
+def case_newton_schulz_orthogonality() -> dict:
+    from components.muon import newton_schulz
+    torch.manual_seed(0)
+    G = torch.randn(96, 64)
+    sv = torch.linalg.svdvals(newton_schulz(G))            # -> all ~1 if orthogonalized
+    return compare("Newton-Schulz svdvals -> 1", sv, torch.ones_like(sv), atol=5e-3)
+
+
+def case_newton_schulz_polar() -> dict:
+    """NS output must match the exact polar factor U V^T (G = U S V^T)."""
+    from components.muon import newton_schulz
+    torch.manual_seed(1)
+    G = torch.randn(64, 48)
+    U, _, Vh = torch.linalg.svd(G, full_matrices=False)
+    return compare("Newton-Schulz vs exact polar U V^T", newton_schulz(G), U @ Vh, atol=5e-3)
+
+
+V4_OPTIM_CASES = [case_newton_schulz_orthogonality, case_newton_schulz_polar]
+
+
 def probe_transformers() -> str:
     try:
         import transformers
@@ -395,6 +420,18 @@ def main():
                 print(f"  [ERR ] {fn.__name__}: {type(e).__name__}: {e}")
     else:
         print("  [SKIP] deepseek_v4 not importable — pin transformers per requirements.txt")
+
+    print("\n--- V4 optimizer parity (Step 6: Muon Newton-Schulz orthogonalization) ---")
+    for fn in V4_OPTIM_CASES:
+        try:
+            r = fn()
+            tag = "PASS" if r["passed"] else "FAIL"
+            if not r["passed"]:
+                failed += 1
+            print(f"  [{tag}] {r['name']:42s} max_abs={r['max_abs']:.2e} (atol {r['atol']:.0e})")
+        except Exception as e:                                # noqa: BLE001
+            failed += 1
+            print(f"  [ERR ] {fn.__name__}: {type(e).__name__}: {e}")
 
     print(f"\n{'ALL BASELINE CASES PASS' if failed == 0 else f'{failed} FAILURE(S)'}")
     raise SystemExit(1 if failed else 0)

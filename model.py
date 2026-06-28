@@ -277,5 +277,21 @@ class GPT(nn.Module):
                                      betas=(train_cfg.beta1, train_cfg.beta2))
         if train_cfg.optimizer == "muon":
             from components.muon import Muon
-            return Muon(groups, lr=train_cfg.lr)                # raises (Step 6)
+            # Route ONLY true 2D matrices (not the embedding/tied head) through Newton-Schulz;
+            # 1D scalars, embeddings, and 3D MoE expert stacks stay on AdamW (ROADMAP §6: a
+            # mixed routing would corrupt the AdamW-vs-Muon comparison).
+            muon_p, adamw_decay, adamw_nodecay = [], [], []
+            for name, p in self.named_parameters():
+                if not p.requires_grad:
+                    continue
+                is_emb_or_head = name.endswith("tok_emb.weight") or name.endswith("lm_head.weight")
+                if p.dim() == 2 and not is_emb_or_head:
+                    muon_p.append(p)
+                elif p.dim() >= 2:
+                    adamw_decay.append(p)
+                else:
+                    adamw_nodecay.append(p)
+            return Muon(muon_p, adamw_decay, adamw_nodecay, lr=train_cfg.lr,
+                        weight_decay=train_cfg.weight_decay,
+                        adamw_betas=(train_cfg.beta1, train_cfg.beta2))
         raise ValueError(train_cfg.optimizer)

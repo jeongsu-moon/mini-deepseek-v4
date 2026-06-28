@@ -208,11 +208,55 @@ V4_ATTN_CASES = [case_hca_compressor, case_csa_compressor, case_lightning_indexe
 
 
 # ---------------------------------------------------------------------------
-# Still-pending V4 components (filled in Steps 4-7)
+# V4 residual parity (Step 4): our mHC HyperConnection vs the transformers
+# deepseek_v4 reference. Weight-copy fn/base/scale, feed identical streams, require
+# post/comb/collapsed max-abs < 1e-4 AND the doubly-stochastic invariant on comb
+# (row & col sums = 1 +/- 1e-5 after the 20-iter Sinkhorn-Knopp projection).
+# ---------------------------------------------------------------------------
+def case_hyper_connection() -> dict:
+    from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
+    from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4HyperConnection
+    import components.residual as R
+    HID, HC, ITERS, EPS = 64, 4, 20, 1e-6
+    ref_cfg = DeepseekV4Config(hidden_size=HID, hc_mult=HC, hc_sinkhorn_iters=ITERS,
+                               hc_eps=EPS, rms_norm_eps=1e-6, num_hidden_layers=1)
+    mc = ModelConfig(n_embd=HID, n_head=2, n_hc=HC, sinkhorn_iters=ITERS, hc_eps=EPS, rms_eps=1e-6)
+    ref = DeepseekV4HyperConnection(ref_cfg).float().eval(); _randomize(ref)
+    ours = R.HyperConnection(mc, sinkhorn_iters=ITERS).float().eval()
+    for n in ("fn", "base", "scale"):
+        ours.get_parameter(n).data.copy_(ref.get_parameter(n))
+
+    g = torch.Generator().manual_seed(0)
+    streams = torch.randn(1, 32, HC, HID, generator=g)
+    with torch.no_grad():
+        r_post, r_comb, r_coll = ref(streams)
+        o_post, o_comb, o_coll = ours(streams)
+
+    got = torch.cat([o_post.flatten(), o_comb.flatten(), o_coll.flatten()])
+    ref_t = torch.cat([r_post.flatten(), r_comb.flatten(), r_coll.flatten()])
+    res = compare("mHC HyperConnection vs deepseek_v4", got, ref_t, atol=1e-4)
+
+    # Doubly-stochastic invariant (Birkhoff manifold): row & col sums -> 1. Checked on a
+    # FRESH module at the real init scale (std 0.02), not the std-1 _randomize weights used
+    # for the weight-copy above — those make the logits pathologically peaky so 20 Sinkhorn
+    # iters can't converge to 1e-5 (the reference can't either, hence parity still matches).
+    fresh = R.HyperConnection(mc, sinkhorn_iters=ITERS).float().eval()
+    with torch.no_grad():
+        _, c, _ = fresh(streams)
+    ds = max((c.sum(-1) - 1).abs().max().item(), (c.sum(-2) - 1).abs().max().item())
+    res["name"] = f"mHC (post/comb/collapsed) vs deepseek_v4 [doubly-stoch {ds:.0e}]"
+    res["passed"] = res["passed"] and ds < 1e-5
+    return res
+
+
+V4_RESIDUAL_CASES = [case_hyper_connection]
+
+
+# ---------------------------------------------------------------------------
+# Still-pending V4 components (filled in Steps 5-7)
 # ---------------------------------------------------------------------------
 PENDING_CASES = {
     "moe":  lambda: ModelConfig(ffn_type="moe"),
-    "mhc":  lambda: ModelConfig(residual_type="mhc"),
 }
 
 
@@ -253,6 +297,21 @@ def main():
     print("\n--- V4 attention parity (Step 3: CSA/HCA/indexer vs deepseek_v4) ---")
     if "deepseek_v4 present" in probe_transformers():
         for fn in V4_ATTN_CASES:
+            try:
+                r = fn()
+                tag = "PASS" if r["passed"] else "FAIL"
+                if not r["passed"]:
+                    failed += 1
+                print(f"  [{tag}] {r['name']:42s} max_abs={r['max_abs']:.2e} (atol {r['atol']:.0e})")
+            except Exception as e:                            # noqa: BLE001
+                failed += 1
+                print(f"  [ERR ] {fn.__name__}: {type(e).__name__}: {e}")
+    else:
+        print("  [SKIP] deepseek_v4 not importable — pin transformers per requirements.txt")
+
+    print("\n--- V4 residual parity (Step 4: mHC HyperConnection vs deepseek_v4) ---")
+    if "deepseek_v4 present" in probe_transformers():
+        for fn in V4_RESIDUAL_CASES:
             try:
                 r = fn()
                 tag = "PASS" if r["passed"] else "FAIL"

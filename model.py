@@ -121,20 +121,47 @@ def _build_ffn(config: ModelConfig) -> nn.Module:
 
 
 class Block(nn.Module):
-    """Pre-norm transformer block. residual_type='mhc' dispatches to the Step-4 stub."""
+    """Pre-norm transformer block.
+
+    residual_type='standard' is the plain single-stream residual. 'hc'/'mhc' keep the
+    residual as n_hc PARALLEL STREAMS ([B,S,H,D]) and mix them in/out of each sublayer
+    via a HyperConnection (Step 4, ROADMAP §4); 'mhc' Sinkhorn-projects the stream mixer
+    onto the doubly-stochastic manifold, 'hc' (sinkhorn_iters=0) leaves it unconstrained.
+    """
     def __init__(self, config: ModelConfig):
         super().__init__()
+        self.residual_type = config.residual_type
         self.attn_norm = RMSNorm(config.n_embd, config.rms_eps)
         self.attn = _build_attention(config)
         self.ffn_norm = RMSNorm(config.n_embd, config.rms_eps)
         self.ffn = _build_ffn(config)
-        if config.residual_type == "mhc":
-            from components.residual import ManifoldConstrainedHyperConnection
-            self.residual = ManifoldConstrainedHyperConnection(config)  # raises (Step 4)
+        if config.residual_type in ("hc", "mhc"):
+            from components.residual import HyperConnection
+            iters = config.sinkhorn_iters if config.residual_type == "mhc" else 0
+            self.attn_hc = HyperConnection(config, sinkhorn_iters=iters)
+            self.ffn_hc = HyperConnection(config, sinkhorn_iters=iters)
 
     def forward(self, x, cos, sin):
-        x = x + self.attn(self.attn_norm(x), cos, sin)
-        x = x + self.ffn(self.ffn_norm(x))
+        if self.residual_type == "standard":
+            x = x + self.attn(self.attn_norm(x), cos, sin)
+            x = x + self.ffn(self.ffn_norm(x))
+            return x
+        return self._hc_forward(x, cos, sin)
+
+    def _hc_forward(self, x, cos, sin):
+        # x: [B, S, H, D] parallel residual streams. Per sublayer: collapse streams (pre),
+        # run the sublayer on the single sequence, then place its output back (post) and
+        # mix the streams (comb). comb is consumed TRANSPOSED — sum_j comb[j,k]*x[j] — since
+        # Sinkhorn yields a doubly-stochastic but non-symmetric matrix (direction matters).
+        dtype = x.dtype
+        post, comb, collapsed = self.attn_hc(x)
+        out = self.attn(self.attn_norm(collapsed), cos, sin)
+        x = post.to(dtype).unsqueeze(-1) * out.unsqueeze(-2) \
+            + torch.matmul(comb.to(dtype).transpose(-1, -2), x)
+        post, comb, collapsed = self.ffn_hc(x)
+        out = self.ffn(self.ffn_norm(collapsed))
+        x = post.to(dtype).unsqueeze(-1) * out.unsqueeze(-2) \
+            + torch.matmul(comb.to(dtype).transpose(-1, -2), x)
         return x
 
 
@@ -142,8 +169,12 @@ class GPT(nn.Module):
     def __init__(self, config: ModelConfig):
         super().__init__()
         self.config = config
+        self.residual_type = config.residual_type
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
         self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
+        if config.residual_type in ("hc", "mhc"):
+            from components.residual import HyperHead
+            self.hc_head = HyperHead(config)               # collapse streams -> one sequence
         self.norm_f = RMSNorm(config.n_embd, config.rms_eps)
         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
         if config.tie_embeddings:
@@ -183,11 +214,15 @@ class GPT(nn.Module):
         cos = self.rope_cos[:T].to(idx.device)
         sin = self.rope_sin[:T].to(idx.device)
         x = self.tok_emb(idx)
+        if self.residual_type in ("hc", "mhc"):            # expand into n_hc parallel streams
+            x = x.unsqueeze(2).expand(-1, -1, self.config.n_hc, -1).contiguous()
         for block in self.blocks:
             if self.grad_checkpoint and self.training:
                 x = checkpoint(block, x, cos, sin, use_reentrant=False)
             else:
                 x = block(x, cos, sin)
+        if self.residual_type in ("hc", "mhc"):            # collapse streams -> [B, T, D]
+            x = self.hc_head(x)
         x = self.norm_f(x)
         logits = self.lm_head(x)
         loss = None

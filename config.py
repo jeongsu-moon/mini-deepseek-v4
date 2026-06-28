@@ -17,7 +17,7 @@ from typing import Optional
 # --- swap-flag value sets (baseline value listed first) ---
 ATTN_TYPES = ("full", "csa", "hca")
 FFN_TYPES = ("mlp", "moe")
-RESIDUAL_TYPES = ("standard", "mhc")
+RESIDUAL_TYPES = ("standard", "hc", "mhc")   # 'hc' = unconstrained HC (sinkhorn_iters=0)
 OPTIM_TYPES = ("adamw", "muon")
 DATA_FORMATS = ("char", "bpe")     # char-level (Step 1) vs BPE multi-domain (Step 2+)
 
@@ -42,7 +42,8 @@ class ModelConfig:
 
     # --- component hyper-params (only used when the flag is non-baseline) ---
     n_hc: int = 4                   # mHC residual streams (verified V4 value: 4)
-    sinkhorn_iters: int = 20        # verified V4 value: 20
+    sinkhorn_iters: int = 20        # verified V4 value: 20 ('hc' arm forces 0)
+    hc_eps: float = 1e-6            # Sinkhorn-Knopp numerical floor (verified V4 value)
     n_routed_experts: int = 8       # toy value (V4-Pro=384 / Flash=256 — do NOT use here)
     n_active_experts: int = 2       # toy value (V4=6)
     n_shared_experts: int = 1

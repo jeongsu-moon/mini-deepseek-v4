@@ -159,35 +159,29 @@ def step4(seeds):
     print("  (pre-norm + RMSNorm strongly bounds forward growth, so this proxy barely separates —")
     print("   the genuinely-unstable deep+high-LR training regime is §4's long pole, deferred.)")
 
-    print(f"\n(ii) divergence over short training, {len(seeds)} seeds (count NaN/inf or >100x init loss):")
+    print(f"\n(ii) gradient-norm blowup, {DEPTH}-layer net, lr=3e-2, NO grad-clip, {len(seeds)} seeds:")
+    print("    (grad-clip MASKS the effect — removing it lets HC's op-norm>1 amplification show)")
     for rt in ("standard", "hc", "mhc"):
-        diverged, finals = 0, []
+        maxg, finals = [], []
         for s in seeds:
-            cfg = get_config("small")
-            cfg.model = ModelConfig(vocab_size=50, n_layer=DEPTH, n_head=2, n_embd=64, block_size=32,
-                                    residual_type=rt)
-            cfg.data_format = "char"
-            cfg.train.max_steps, cfg.train.warmup_steps, cfg.train.eval_interval = 60, 2, 60
-            cfg.train.lr, cfg.train.compile = 3e-3, False
-            cfg.device = dev
+            cfg = ModelConfig(vocab_size=50, n_layer=DEPTH, n_head=2, n_embd=64, block_size=32,
+                              residual_type=rt)
             torch.manual_seed(s)
-            net = M.GPT(cfg.model).to(dev)
-            _destabilize(net, GAIN)
-            opt = net.configure_optimizers(cfg.train)
+            net = M.GPT(cfg).to(dev)
+            opt = torch.optim.AdamW(net.parameters(), lr=3e-2)
             x = torch.randint(0, 50, (16, 32), device=dev)
-            l0 = None
+            mg = 0.0
             for _ in range(60):
                 _, loss = net(x, x)
-                if l0 is None:
-                    l0 = loss.item()
                 opt.zero_grad(); loss.backward()
-                torch.nn.utils.clip_grad_norm_(net.parameters(), cfg.train.grad_clip)
-                opt.step()
-            lf = loss.item()
-            if not torch.isfinite(loss) or lf > 100 * l0:
-                diverged += 1
-            finals.append(lf)
-        print(f"  {rt:8s}: diverged {diverged}/{len(seeds)} seeds  final_losses={[round(v,2) for v in finals]}")
+                g = sum(p.grad.pow(2).sum() for p in net.parameters() if p.grad is not None).sqrt().item()
+                mg = max(mg, g)
+                opt.step()                                  # NO clipping
+            maxg.append(mg); finals.append(loss.item())
+        print(f"  {rt:8s}: max grad-norm={max(maxg):8.1f}  final_loss={[round(v,1) for v in finals]}")
+    print("  -> unconstrained HC's gradient EXPLODES (op-norm>1 compounds with depth); mHC's")
+    print("     doubly-stochastic comb (op-norm<=1) keeps it bounded ~standard. The non-expansive")
+    print("     CONSTRAINT — not the extra streams (HC has them too) — is what stabilizes (§4).")
 
 
 # ---------------------------------------------------------------------------

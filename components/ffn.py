@@ -58,6 +58,8 @@ class MoEExperts(nn.Module):
         self.gate_up_proj = nn.Parameter(torch.empty(self.num_experts, 2 * I, H))
         self.down_proj = nn.Parameter(torch.empty(self.num_experts, H, I))
         self.limit = config.swiglu_limit
+        self.quant_mode = config.quant_mode          # Step 7 FP4 fake-quant (experts only)
+        self.quant_per_channel = config.quant_per_channel
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -72,10 +74,20 @@ class MoEExperts(nn.Module):
         up = up.clamp(min=-self.limit, max=self.limit)
         return F.silu(gate) * up
 
+    def _w(self, weight: torch.Tensor) -> torch.Tensor:
+        # Step 7: FP4 fake-quant the expert weights. qat -> always (STE so grads flow);
+        # ptq -> eval only (train full precision, quantize the final weights at inference).
+        if self.quant_mode == "qat" or (self.quant_mode == "ptq" and not self.training):
+            from components.quant import fp4_fake_quant
+            return fp4_fake_quant(weight, ste=self.quant_mode == "qat",
+                                  per_channel=self.quant_per_channel)
+        return weight
+
     def forward(self, hidden_states, top_k_index, top_k_weights):
         # hidden_states [T, H]; top_k_index/top_k_weights [T, top_k]. Loop over experts that
         # actually received tokens, gather their tokens, run the expert, scatter-add back
         # (index_add_), weighting by the routing weight. Matches the reference op-for-op.
+        gate_up_proj, down_proj = self._w(self.gate_up_proj), self._w(self.down_proj)
         final = torch.zeros_like(hidden_states)
         with torch.no_grad():
             mask = F.one_hot(top_k_index, num_classes=self.num_experts).permute(2, 1, 0)
@@ -83,8 +95,8 @@ class MoEExperts(nn.Module):
         for expert_idx in hit:
             expert_idx = expert_idx[0]
             top_k_pos, token_idx = torch.where(mask[expert_idx])
-            current = self._apply_gate(F.linear(hidden_states[token_idx], self.gate_up_proj[expert_idx]))
-            current = F.linear(current, self.down_proj[expert_idx]) * top_k_weights[token_idx, top_k_pos, None]
+            current = self._apply_gate(F.linear(hidden_states[token_idx], gate_up_proj[expert_idx]))
+            current = F.linear(current, down_proj[expert_idx]) * top_k_weights[token_idx, top_k_pos, None]
             final.index_add_(0, token_idx, current.to(final.dtype))
         return final
 

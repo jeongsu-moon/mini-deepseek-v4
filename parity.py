@@ -382,6 +382,31 @@ def case_mtp_speculative() -> dict:
 V4_MTP_CASES = [case_mtp_loss, case_mtp_speculative]
 
 
+# ---------------------------------------------------------------------------
+# V4 FP4 fake-quant verification (Step 7): no transformers reference — verify the E2M1 grid
+# snapping and the straight-through-estimator gradient (the QAT numerics). SIMULATION-only:
+# all arithmetic is bf16/fp32, zero hardware gain on Ampere (ROADMAP §7). Pure torch.
+# ---------------------------------------------------------------------------
+def case_fp4_grid() -> dict:
+    from components.quant import quantize_fp4
+    # per-tensor scale=1: values must snap to nearest E2M1 magnitude (2.5 ties low -> 2.0).
+    w = torch.tensor([[6.0, -6.0, 0.7, -0.2, 2.5, 3.4, 0.0, 1.24]])
+    expect = torch.tensor([[6.0, -6.0, 0.5, 0.0, 2.0, 3.0, 0.0, 1.0]])
+    got = quantize_fp4(w, scale=torch.ones(1))
+    return compare("FP4 E2M1 grid snapping", got, expect, atol=0.0)
+
+
+def case_fp4_ste() -> dict:
+    from components.quant import fp4_fake_quant
+    torch.manual_seed(0)
+    w = torch.randn(4, 8, requires_grad=True)
+    fp4_fake_quant(w, ste=True).sum().backward()             # STE -> dq/dw = 1 everywhere
+    return compare("FP4 straight-through grad == 1", w.grad, torch.ones_like(w), atol=0.0)
+
+
+V4_QUANT_CASES = [case_fp4_grid, case_fp4_ste]
+
+
 def probe_transformers() -> str:
     try:
         import transformers
@@ -475,6 +500,18 @@ def main():
 
     print("\n--- V4 MTP verification (Step 6 +MTP: multi-token prediction / self-speculative) ---")
     for fn in V4_MTP_CASES:
+        try:
+            r = fn()
+            tag = "PASS" if r["passed"] else "FAIL"
+            if not r["passed"]:
+                failed += 1
+            print(f"  [{tag}] {r['name']:42s} max_abs={r['max_abs']:.2e} (atol {r['atol']:.0e})")
+        except Exception as e:                                # noqa: BLE001
+            failed += 1
+            print(f"  [ERR ] {fn.__name__}: {type(e).__name__}: {e}")
+
+    print("\n--- V4 FP4 verification (Step 7: E2M1 fake-quant + STE; SIMULATION-only) ---")
+    for fn in V4_QUANT_CASES:
         try:
             r = fn()
             tag = "PASS" if r["passed"] else "FAIL"

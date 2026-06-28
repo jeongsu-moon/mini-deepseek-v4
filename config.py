@@ -20,6 +20,7 @@ FFN_TYPES = ("mlp", "moe")
 RESIDUAL_TYPES = ("standard", "hc", "mhc")   # 'hc' = unconstrained HC (sinkhorn_iters=0)
 OPTIM_TYPES = ("adamw", "muon")
 SCORING_FUNCS = ("sqrtsoftplus", "sigmoid")   # V4 delta vs V3 (A/B for the routing study)
+QUANT_MODES = ("none", "qat", "ptq")          # Step 7 FP4 fake-quant (experts); SIMULATION-only
 DATA_FORMATS = ("char", "bpe")     # char-level (Step 1) vs BPE multi-domain (Step 2+)
 
 
@@ -64,6 +65,10 @@ class ModelConfig:
     # self-speculative decoding. Acceptance is meaningful on BPE only (ROADMAP §6).
     mtp_depth: int = 0
     mtp_loss_coef: float = 0.3
+    # FP4 QAT (Step 7) — fake-quant of routed-expert weights to E2M1. SIMULATION-only on
+    # Ampere (zero speed/memory gain); measures QAT-vs-PTQ accuracy recovery, not throughput.
+    quant_mode: str = "none"            # 'none' | 'qat' (STE, train+eval) | 'ptq' (eval-only)
+    quant_per_channel: bool = True      # per-expert scale (vs per-tensor)
     csa_compress_m: int = 4         # verified V4 value: 4
     hca_compress_m: int = 128       # verified V4 value (m'): 128
     sliding_window: int = 128       # verified V4 value (n_win): 128
@@ -85,6 +90,8 @@ class ModelConfig:
             raise ValueError(f"residual_type must be one of {RESIDUAL_TYPES}, got {self.residual_type!r}")
         if self.scoring_func not in SCORING_FUNCS:
             raise ValueError(f"scoring_func must be one of {SCORING_FUNCS}, got {self.scoring_func!r}")
+        if self.quant_mode not in QUANT_MODES:
+            raise ValueError(f"quant_mode must be one of {QUANT_MODES}, got {self.quant_mode!r}")
         if self.head_dim is None:
             if self.n_embd % self.n_head != 0:
                 raise ValueError("n_embd must be divisible by n_head when head_dim is None")

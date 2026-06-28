@@ -109,14 +109,14 @@ def _build_attention(config: ModelConfig) -> nn.Module:
     raise ValueError(config.attn_type)
 
 
-def _build_ffn(config: ModelConfig) -> nn.Module:
+def _build_ffn(config: ModelConfig, layer_idx: int = 0) -> nn.Module:
     if config.ffn_type == "mlp":
         hidden = int(config.mlp_ratio * config.n_embd)
         hidden = 64 * ((hidden + 63) // 64)                  # round to a nice multiple
         return SwiGLU(config.n_embd, hidden)
     if config.ffn_type == "moe":
         from components.ffn import DeepSeekMoE
-        return DeepSeekMoE(config)
+        return DeepSeekMoE(config, layer_idx)                # layer_idx selects hash vs top-k
     raise ValueError(config.ffn_type)
 
 
@@ -128,27 +128,32 @@ class Block(nn.Module):
     via a HyperConnection (Step 4, ROADMAP §4); 'mhc' Sinkhorn-projects the stream mixer
     onto the doubly-stochastic manifold, 'hc' (sinkhorn_iters=0) leaves it unconstrained.
     """
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, layer_idx: int = 0):
         super().__init__()
         self.residual_type = config.residual_type
+        self.is_moe = config.ffn_type == "moe"
         self.attn_norm = RMSNorm(config.n_embd, config.rms_eps)
         self.attn = _build_attention(config)
         self.ffn_norm = RMSNorm(config.n_embd, config.rms_eps)
-        self.ffn = _build_ffn(config)
+        self.ffn = _build_ffn(config, layer_idx)
         if config.residual_type in ("hc", "mhc"):
             from components.residual import HyperConnection
             iters = config.sinkhorn_iters if config.residual_type == "mhc" else 0
             self.attn_hc = HyperConnection(config, sinkhorn_iters=iters)
             self.ffn_hc = HyperConnection(config, sinkhorn_iters=iters)
 
-    def forward(self, x, cos, sin):
+    def _apply_ffn(self, h, input_ids):
+        # MoE hash layers need the token ids (frozen tid2eid lookup); MLP/top-k ignore them.
+        return self.ffn(h, input_ids) if self.is_moe else self.ffn(h)
+
+    def forward(self, x, cos, sin, input_ids=None):
         if self.residual_type == "standard":
             x = x + self.attn(self.attn_norm(x), cos, sin)
-            x = x + self.ffn(self.ffn_norm(x))
+            x = x + self._apply_ffn(self.ffn_norm(x), input_ids)
             return x
-        return self._hc_forward(x, cos, sin)
+        return self._hc_forward(x, cos, sin, input_ids)
 
-    def _hc_forward(self, x, cos, sin):
+    def _hc_forward(self, x, cos, sin, input_ids):
         # x: [B, S, H, D] parallel residual streams. Per sublayer: collapse streams (pre),
         # run the sublayer on the single sequence, then place its output back (post) and
         # mix the streams (comb). comb is consumed TRANSPOSED — sum_j comb[j,k]*x[j] — since
@@ -159,7 +164,7 @@ class Block(nn.Module):
         x = post.to(dtype).unsqueeze(-1) * out.unsqueeze(-2) \
             + torch.matmul(comb.to(dtype).transpose(-1, -2), x)
         post, comb, collapsed = self.ffn_hc(x)
-        out = self.ffn(self.ffn_norm(collapsed))
+        out = self._apply_ffn(self.ffn_norm(collapsed), input_ids)
         x = post.to(dtype).unsqueeze(-1) * out.unsqueeze(-2) \
             + torch.matmul(comb.to(dtype).transpose(-1, -2), x)
         return x
@@ -171,7 +176,7 @@ class GPT(nn.Module):
         self.config = config
         self.residual_type = config.residual_type
         self.tok_emb = nn.Embedding(config.vocab_size, config.n_embd)
-        self.blocks = nn.ModuleList([Block(config) for _ in range(config.n_layer)])
+        self.blocks = nn.ModuleList([Block(config, i) for i in range(config.n_layer)])
         if config.residual_type in ("hc", "mhc"):
             from components.residual import HyperHead
             self.hc_head = HyperHead(config)               # collapse streams -> one sequence
@@ -218,9 +223,9 @@ class GPT(nn.Module):
             x = x.unsqueeze(2).expand(-1, -1, self.config.n_hc, -1).contiguous()
         for block in self.blocks:
             if self.grad_checkpoint and self.training:
-                x = checkpoint(block, x, cos, sin, use_reentrant=False)
+                x = checkpoint(block, x, cos, sin, idx, use_reentrant=False)
             else:
-                x = block(x, cos, sin)
+                x = block(x, cos, sin, idx)
         if self.residual_type in ("hc", "mhc"):            # collapse streams -> [B, T, D]
             x = self.hc_head(x)
         x = self.norm_f(x)
@@ -228,7 +233,20 @@ class GPT(nn.Module):
         loss = None
         if targets is not None:
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1))
+            if self.config.ffn_type == "moe":             # + sequence-wise balance loss (Step 5)
+                loss = loss + self._moe_balance_loss(B)
         return logits, loss
+
+    def _moe_balance_loss(self, batch_seq: int) -> torch.Tensor:
+        """Sum the sequence-wise balance loss over MoE blocks, scaled by balance_loss_coef.
+        The aux-loss-free bias controller is separate — it updates inside the routers, not
+        through this gradient. Hash layers route statically, so only top-k layers contribute
+        a meaningful gradient, but every MoE block reports its term for measurement."""
+        total = 0.0
+        for block in self.blocks:
+            moe = block.ffn
+            total = total + moe.balance_loss_coef * moe.balance_loss(batch_seq)
+        return total
 
     @torch.no_grad()
     def generate(self, idx, max_new_tokens, temperature=1.0, top_k=None):

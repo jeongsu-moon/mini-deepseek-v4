@@ -253,11 +253,68 @@ V4_RESIDUAL_CASES = [case_hyper_connection]
 
 
 # ---------------------------------------------------------------------------
-# Still-pending V4 components (filled in Steps 5-7)
+# V4 MoE parity (Step 5): our DeepSeekMoE block (router + clamped-SwiGLU experts +
+# shared expert) vs the transformers DeepseekV4SparseMoeBlock. Weight-copy the gate /
+# experts / shared weights (and the hash table / bias buffers), feed identical input,
+# require max-abs < 1e-4. Covers both layer kinds: learned top-k and frozen hash.
 # ---------------------------------------------------------------------------
-PENDING_CASES = {
-    "moe":  lambda: ModelConfig(ffn_type="moe"),
-}
+def _moe_aligned(layer_idx: int):
+    """Tiny DeepseekV4Config + matching ModelConfig for one MoE layer (hash if layer_idx<3)."""
+    from transformers.models.deepseek_v4.configuration_deepseek_v4 import DeepseekV4Config
+    import components.ffn as Fmod
+    HID, NEXP, TOPK, INTER, VOCAB = 64, 8, 2, 32, 50
+    ref_cfg = DeepseekV4Config(
+        vocab_size=VOCAB, hidden_size=HID, num_hidden_layers=4, n_routed_experts=NEXP,
+        num_experts_per_tok=TOPK, n_shared_experts=1, moe_intermediate_size=INTER,
+        scoring_func="sqrtsoftplus", routed_scaling_factor=1.5, norm_topk_prob=True,
+        swiglu_limit=10.0, hidden_act="silu", mlp_bias=False, rms_norm_eps=1e-6)
+    mc = ModelConfig(vocab_size=VOCAB, n_embd=HID, n_head=2, n_routed_experts=NEXP,
+                     n_active_experts=TOPK, n_shared_experts=1, moe_intermediate_size=INTER,
+                     scoring_func="sqrtsoftplus", routed_scaling_factor=1.5, norm_topk_prob=True,
+                     swiglu_limit=10.0, n_hash_layers=3, rms_eps=1e-6)
+    return ref_cfg, mc, Fmod, HID, NEXP, TOPK, VOCAB
+
+
+def _copy_moe(ours, ref):
+    ours.gate.weight.data.copy_(ref.gate.weight)
+    ours.experts.gate_up_proj.data.copy_(ref.experts.gate_up_proj)
+    ours.experts.down_proj.data.copy_(ref.experts.down_proj)
+    ours.shared_experts.gate.weight.data.copy_(ref.shared_experts.gate_proj.weight)
+    ours.shared_experts.up.weight.data.copy_(ref.shared_experts.up_proj.weight)
+    ours.shared_experts.down.weight.data.copy_(ref.shared_experts.down_proj.weight)
+
+
+def case_moe_topk() -> dict:
+    from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4SparseMoeBlock
+    ref_cfg, mc, Fmod, HID, NEXP, TOPK, VOCAB = _moe_aligned(layer_idx=3)
+    ref = DeepseekV4SparseMoeBlock(ref_cfg, layer_idx=3).float().eval(); _randomize(ref)
+    ours = Fmod.DeepSeekMoE(mc, layer_idx=3).float().eval(); _copy_moe(ours, ref)
+    # exercise the aux-loss-free path: same non-zero selection bias in both (selection only).
+    bias = torch.randn(NEXP, generator=torch.Generator().manual_seed(7))
+    ref.gate.e_score_correction_bias.copy_(bias); ours.gate.e_score_correction_bias.copy_(bias)
+    g = torch.Generator().manual_seed(0)
+    x = torch.randn(2, 16, HID, generator=g)
+    with torch.no_grad():
+        r = ref(x); o = ours(x)
+    return compare("MoE top-k block vs deepseek_v4", o, r, atol=1e-4)
+
+
+def case_moe_hash() -> dict:
+    from transformers.models.deepseek_v4.modeling_deepseek_v4 import DeepseekV4SparseMoeBlock
+    ref_cfg, mc, Fmod, HID, NEXP, TOPK, VOCAB = _moe_aligned(layer_idx=0)
+    ref = DeepseekV4SparseMoeBlock(ref_cfg, layer_idx=0).float().eval(); _randomize(ref)
+    ours = Fmod.DeepSeekMoE(mc, layer_idx=0).float().eval(); _copy_moe(ours, ref)
+    table = torch.randint(0, NEXP, (VOCAB, TOPK), generator=torch.Generator().manual_seed(3))
+    ref.gate.tid2eid.copy_(table); ours.gate.tid2eid.copy_(table)
+    g = torch.Generator().manual_seed(0)
+    x = torch.randn(2, 16, HID, generator=g)
+    ids = torch.randint(0, VOCAB, (2, 16), generator=g)
+    with torch.no_grad():
+        r = ref(x, ids); o = ours(x, ids)
+    return compare("MoE hash block vs deepseek_v4", o, r, atol=1e-4)
+
+
+V4_MOE_CASES = [case_moe_topk, case_moe_hash]
 
 
 def probe_transformers() -> str:
@@ -324,15 +381,20 @@ def main():
     else:
         print("  [SKIP] deepseek_v4 not importable — pin transformers per requirements.txt")
 
-    print("\n--- V4 component cases (pending) ---")
-    for key, make_cfg in PENDING_CASES.items():
-        try:
-            M.GPT(make_cfg()) if key in ("moe", "mhc") else M._build_attention(make_cfg())
-            print(f"  [????] {key}: unexpectedly constructed (did you implement it?)")
-        except NotImplementedError:
-            print(f"  [PEND] {key}: stub raises NotImplementedError (fill in its roadmap step)")
-        except Exception as e:                                # noqa: BLE001
-            print(f"  [ERR ] {key}: {type(e).__name__}: {e}")
+    print("\n--- V4 MoE parity (Step 5: DeepSeekMoE block vs deepseek_v4) ---")
+    if "deepseek_v4 present" in probe_transformers():
+        for fn in V4_MOE_CASES:
+            try:
+                r = fn()
+                tag = "PASS" if r["passed"] else "FAIL"
+                if not r["passed"]:
+                    failed += 1
+                print(f"  [{tag}] {r['name']:42s} max_abs={r['max_abs']:.2e} (atol {r['atol']:.0e})")
+            except Exception as e:                            # noqa: BLE001
+                failed += 1
+                print(f"  [ERR ] {fn.__name__}: {type(e).__name__}: {e}")
+    else:
+        print("  [SKIP] deepseek_v4 not importable — pin transformers per requirements.txt")
 
     print(f"\n{'ALL BASELINE CASES PASS' if failed == 0 else f'{failed} FAILURE(S)'}")
     raise SystemExit(1 if failed else 0)

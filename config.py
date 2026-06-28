@@ -19,6 +19,7 @@ ATTN_TYPES = ("full", "csa", "hca")
 FFN_TYPES = ("mlp", "moe")
 RESIDUAL_TYPES = ("standard", "hc", "mhc")   # 'hc' = unconstrained HC (sinkhorn_iters=0)
 OPTIM_TYPES = ("adamw", "muon")
+SCORING_FUNCS = ("sqrtsoftplus", "sigmoid")   # V4 delta vs V3 (A/B for the routing study)
 DATA_FORMATS = ("char", "bpe")     # char-level (Step 1) vs BPE multi-domain (Step 2+)
 
 
@@ -45,8 +46,19 @@ class ModelConfig:
     sinkhorn_iters: int = 20        # verified V4 value: 20 ('hc' arm forces 0)
     hc_eps: float = 1e-6            # Sinkhorn-Knopp numerical floor (verified V4 value)
     n_routed_experts: int = 8       # toy value (V4-Pro=384 / Flash=256 — do NOT use here)
-    n_active_experts: int = 2       # toy value (V4=6)
+    n_active_experts: int = 2       # toy value (V4=6); = num_experts_per_tok (top-k)
     n_shared_experts: int = 1
+    # MoE (Step 5) — verified V4 deltas. scoring sqrtsoftplus (vs V3 sigmoid); first
+    # n_hash_layers MoE layers use FROZEN hash routing; aux-loss-free bias controller
+    # (load-based, NOT gradient) + a sequence-wise balance loss. Toy intermediate size.
+    moe_intermediate_size: int = 256   # per-expert SwiGLU hidden (V4: 2048)
+    scoring_func: str = "sqrtsoftplus"  # 'sqrtsoftplus' (V4) or 'sigmoid' (V3) — A/B knob
+    routed_scaling_factor: float = 1.5
+    swiglu_limit: float = 10.0          # clamped-SwiGLU expert activation bound
+    norm_topk_prob: bool = True
+    n_hash_layers: int = 3              # first N MoE layers route via frozen tid2eid
+    balance_loss_coef: float = 1e-3     # sequence-wise balance loss weight
+    bias_update_rate: float = 1e-3      # aux-loss-free controller step (sign rule, no grad)
     csa_compress_m: int = 4         # verified V4 value: 4
     hca_compress_m: int = 128       # verified V4 value (m'): 128
     sliding_window: int = 128       # verified V4 value (n_win): 128
@@ -66,6 +78,8 @@ class ModelConfig:
             raise ValueError(f"ffn_type must be one of {FFN_TYPES}, got {self.ffn_type!r}")
         if self.residual_type not in RESIDUAL_TYPES:
             raise ValueError(f"residual_type must be one of {RESIDUAL_TYPES}, got {self.residual_type!r}")
+        if self.scoring_func not in SCORING_FUNCS:
+            raise ValueError(f"scoring_func must be one of {SCORING_FUNCS}, got {self.scoring_func!r}")
         if self.head_dim is None:
             if self.n_embd % self.n_head != 0:
                 raise ValueError("n_embd must be divisible by n_head when head_dim is None")

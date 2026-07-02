@@ -6,109 +6,141 @@
 [![arXiv](https://img.shields.io/badge/arXiv-2606.19348-b31b1b.svg)](https://arxiv.org/abs/2606.19348)
 [![Roadmap](https://img.shields.io/badge/roadmap-8%20%2F%208%20complete-success.svg)](ROADMAP.md)
 
-> **단일 RTX 3090에서, from-scratch PyTorch로, DeepSeek-V4의 핵심 컴포넌트를
-> "한 번에 하나씩" 토이 스케일로 재현하는 측정 중심(measurement-first) 연구 프로젝트.**
+> **A measurement-first research project that reproduces DeepSeek-V4's core
+> components from scratch in PyTorch, "one mechanism at a time," at toy scale on a
+> single RTX 3090.**
 
-DeepSeek-V4 보고서([arXiv:2606.19348](https://arxiv.org/abs/2606.19348))의
-아키텍처 혁신(CSA/HCA 압축-KV 어텐션, mHC, DeepSeekMoE 델타, Muon, MTP, FP4 QAT)을
-**이기는 것이 목표가 아니라**, 각 메커니즘이 작동하는 레짐을 직접 만들어 그 정성적 거동을
-재현하고 *왜* 그렇게 동작하는지 설명하는 데 목표를 둡니다. 성공의 정의는
-"swap이 baseline보다 loss가 낮다"가 아니라 **"메커니즘 고유 관측량(expert load CV,
-residual spectral norm, Sinkhorn 수렴, KV/FLOPs 곡선 …)의 재현 + WHY"** 입니다.
+The goal is **not to beat a baseline**. It is to reproduce the *qualitative behavior*
+of each architectural innovation in the DeepSeek-V4 report
+([arXiv:2606.19348](https://arxiv.org/abs/2606.19348)) — CSA/HCA compressed-KV
+attention, mHC, DeepSeekMoE deltas, Muon, MTP, FP4 QAT — by deliberately building the
+regime in which each mechanism is supposed to matter, and to explain *why* it behaves
+that way. Success is not "the swap has lower loss than the baseline"; it is
+**"reproducing each mechanism's characteristic observable (expert-load CV, residual
+spectral norm, Sinkhorn convergence, KV/FLOPs curves …) and understanding WHY."**
 
-설계의 두 축:
-- **baseline-always-runs** — 표준 dense 트랜스포머(RMSNorm·RoPE·SwiGLU·causal SDPA)가
-  항상 돌고, config 플래그 하나만 바꿔 V4 컴포넌트로 *디스패치*합니다. 변수 1개만 바뀐
-  깨끗한 비교가 가능해집니다.
-- **2σ 게이트** — "1 run = 1 data point" 가정을 폐기하고, 모든 효과 주장은 노이즈
-  플로어(σ_seed)의 2σ를 넘어야 "real"로 인정합니다.
+Two design principles:
 
-**8단계 ROADMAP 완주** — 다섯 V4 메커니즘(CSA/HCA, mHC, DeepSeekMoE, Muon+MTP, FP4 QAT)이
-모두 from-scratch로 구현되고 핀 고정 transformers `deepseek_v4`와 parity 검증(`parity.py`,
-18케이스, max-abs ≤ 1e-4)됐습니다. 측정 트랙(`measure.py`)은 각 메커니즘의 고유 관측량을
-2σ 게이트로 판정하며, 폐막 귀속 원장(Step 8)이 분해 가설과 화해합니다. 핵심 발견:
-**구조적 불변량**(mHC non-expansive, MoE load 균형, MTP acceptance)은 토이 스케일에서도
-재현되고, **효율 트레이드오프**(CSA/HCA·Muon·FP4)는 타깃 레짐(긴 context·다수 step·강한
-양자화)에서만 이득이 나타납니다 — 오구현이 아니라 *레짐 게이팅*(parity는 정확). 전체 8단계
-계획·사실 교정·방법론은 **[`ROADMAP.md`](ROADMAP.md)** 참조 (보고서 PDF는 저작권상 미포함 —
-`.gitignore`).
+- **baseline-always-runs** — a standard dense transformer (RMSNorm · RoPE · SwiGLU ·
+  causal SDPA) always runs, and a single config flag *dispatches* to a V4 component.
+  This keeps every comparison clean: exactly one variable changes.
+- **2σ gate** — the "1 run = 1 data point" assumption is discarded. Every claimed
+  effect must exceed 2σ of the seed noise floor (σ_seed) before it counts as *real*.
 
-## 설치
+## Status: 8-step roadmap complete
+
+All five V4 mechanisms (CSA/HCA, mHC, DeepSeekMoE, Muon + MTP, FP4 QAT) are implemented
+from scratch and **parity-verified** against a pinned `transformers` `deepseek_v4`
+reference (`parity.py`, 18 cases, max-abs ≤ 1e-4). The measurement track (`measure.py`)
+judges each mechanism's characteristic observable through the 2σ gate, and the closing
+attribution ledger (Step 8) reconciles it with the decomposition hypothesis.
+
+**Key finding:** *structural invariants* (mHC non-expansiveness, MoE load balancing, MTP
+acceptance) reproduce even at toy scale, whereas *efficiency trade-offs* (CSA/HCA, Muon,
+FP4) only pay off in their target regime (long context · many steps · aggressive
+quantization) — this is *regime gating*, not a broken implementation (parity is exact).
+
+The full 8-step plan, fact corrections, and per-step methodology live in
+**[`ROADMAP.md`](ROADMAP.md)** (in Korean). The report PDF is not included in the repo
+for copyright reasons (`.gitignore`'d).
+
+## Install
+
 ```bash
 pip install -r requirements.txt   # torch / numpy / matplotlib / datasets / tokenizers
-# parity 크로스체크는 핀 고정 transformers 커밋 필요 (requirements.txt 주석 참조, Step 3+)
+# parity cross-checks need a pinned transformers commit (see requirements.txt comments)
 ```
 
-## Step 1 — 세 가지 산출물
+## Quickstart — baseline training
 
-**(A) 노이즈 플로어** — "1 run = 1 data point" 가정 폐기. init-seed/data-seed 두 축으로
-σ_seed와 2σ 임계값을 뽑는다(이후 모든 효과는 이걸 넘어야 "real").
 ```bash
-python noise_floor.py --config small --n_seeds 5          # 빠른 점검(분 단위)
-python noise_floor.py --config gpu3090 --n_seeds 5        # 실제 ~85M 플로어(하루 예산)
+python train.py --config small                            # trains instantly; watch the loss drop
+python train.py --config gpu3090 --data_path corpus.txt   # ~85M dense baseline on a 24GB 3090
+python plot.py out/small/log.json                         # loss curve
+python train.py --config gpu3090 --no_compile             # while editing modules
+```
+
+## Component dispatch (the swaps)
+
+A config flag branches into `components/`. The baseline (`full` / `mlp` / `standard` /
+`adamw`) always runs; each V4 mechanism is enabled by its own flag:
+
+```bash
+python train.py --config small
+# attn_type = csa|hca   ffn_type = moe   residual_type = mhc   optimizer = muon
+```
+
+## Measurement infrastructure
+
+Three tools underpin every claim in the project:
+
+**(A) Noise floor** — discards the "1 run = 1 data point" assumption. Sweeps two axes
+(init-seed / data-seed) to extract σ_seed and the 2σ threshold that every later effect
+must clear to count as *real*.
+
+```bash
+python noise_floor.py --config small   --n_seeds 5   # quick check (minutes)
+python noise_floor.py --config gpu3090 --n_seeds 5   # real ~85M floor (a day's budget)
 # -> out/<cfg>/noise_floor.json
 ```
 
-**(B) 패리티 하니스** — 베이스라인 원시 연산(RMSNorm·RoPE·SwiGLU·causal SDPA)을
-독립 레퍼런스/불변량으로 검증(오늘 PASS). V4 케이스는 PEND(=스텁) 상태로 배선만.
+**(B) Parity harness** — verifies each component against an independent reference /
+invariant. Baseline primitives (RMSNorm · RoPE · SwiGLU · causal SDPA) check against
+hand-derived invariants; Steps 3–7 check each V4 component against a **pinned-commit**
+`transformers` `deepseek_v4` submodule at max-abs < 1e-4 (a mismatch may be a library
+bug — see ROADMAP §0.1).
+
 ```bash
-python parity.py        # baseline PASS / V4 PEND; transformers 있으면 deepseek_v4 탐지
+python parity.py   # 18 cases; auto-detects deepseek_v4 if transformers is installed
 ```
-Steps 3-7에서 각 컴포넌트를 **핀 고정 commit**의 transformers `deepseek_v4` 서브모듈과
-max-abs < 1e-4로 대조(mismatch는 라이브러리 버그일 수도 — ROADMAP §0.1).
 
-**(C) 해석적 시스템 프로파일** — 가중치 로드 없이 config 수치만으로 KV/FLOPs vs 컨텍스트
-곡선. 3090은 1.6T/284B를 못 올리고 1M도 못 돌리므로 **해석 계산**(report의 27%/10% shape 재현).
+**(C) Analytic system profile** — KV/FLOPs-vs-context curves computed analytically from
+config numbers alone (no weights loaded). A 3090 cannot hold V4-Pro's 1.6T/284B params
+or run a 1M context, so the report's headline shape (27% FLOPs / 10% KV @1M) is
+reproduced by calculation.
+
 ```bash
-python profile_analytic.py    # -> out/analytic_profile.{csv,png}, @1M 비율 출력
+python profile_analytic.py   # -> out/analytic_profile.{csv,png}, prints @1M ratios
 ```
 
-## 베이스라인 학습
-```bash
-python train.py --config small                     # 즉시 학습, 손실 하강 확인
-python train.py --config gpu3090 --data_path corpus.txt   # ~85M
-python plot.py out/small/log.json                  # 곡선
-python train.py --config gpu3090 --no_compile      # 모듈 수정 중
+## Files
+
+```
+config.py            presets (small / gpu3090) + swap flags + verified component hypers
+model.py             baseline GPT (RMSNorm · RoPE · SwiGLU · SDPA) + dispatch
+data.py              char-level dataset (data_seed controls sample order)
+train.py             training loop (bf16 · cosine · deterministic) + train_once()
+noise_floor.py       Step 1A (2σ gate)
+parity.py            Step 1B + Step 3–7 component parity (18 cases)
+profile_analytic.py  Step 1C (no weights)
+measure.py           Step 3–8 measurement track (observables + 2σ verdicts + ledger)
+plot.py              loss-curve overlays
+components/          CSA/HCA · MoE · mHC · Muon · MTP · FP4 implementations
 ```
 
-## swap 디스패치 (이후 steps)
-config 플래그가 `components/`로 분기 → 미구현은 친절한 에러:
-```bash
-python train.py --config small   # 기본 = full / mlp / standard / adamw (항상 실행)
-# attn_type=csa|hca, ffn_type=moe, residual_type=mhc, optimizer=muon 은 해당 step에서 구현
-```
+## Notes on the RTX 3090
 
-## 파일
-```
-config.py            프리셋(small/gpu3090) + swap 플래그 + 검증된 컴포넌트 하이퍼
-model.py             베이스라인 GPT (RMSNorm·RoPE·SwiGLU·SDPA) + 디스패치
-data.py              char-level 데이터셋 (data_seed로 샘플 순서 제어)
-train.py             학습 루프(bf16·cosine·deterministic) + train_once()
-noise_floor.py       Step 1A (2σ 게이트)
-parity.py            Step 1B + Step 3-7 컴포넌트 parity (18케이스)
-profile_analytic.py  Step 1C (가중치 없음)
-measure.py           Step 3-8 측정 트랙 (관측량 + 2σ 판정 + 귀속 원장)
-plot.py              손실곡선 오버레이
-components/           CSA/HCA·MoE·mHC·Muon·MTP·FP4 구현
-```
+- Ampere sm_86 has **bf16 tensor cores**, but **no FP8** (Hopper) or **FP4** (Blackwell),
+  so FP4/FP8 in Step 7 is fake-quant (simulation, zero speedup).
+- The `gpu3090` ~85M config uses ≈ 1.4 GB for weights + AdamW — 4×+ headroom in 24 GB.
+  On OOM, lower batch, then block size.
+- Context experiments run to 4k–16k (24 GB); the 1M point comes only from (C)'s analytic
+  curve.
 
-## 3090 메모
-- Ampere sm_86: **bf16 텐서코어 O**, FP8(Hopper)·FP4(Blackwell) **X** → FP4/FP8은 Step 7에서
-  fake-quant(시뮬, 이득 0).
-- `gpu3090` ~85M는 weights+AdamW ≈ 1.4GB로 24GB에 4배+ 여유. OOM이면 batch→block 순으로 낮춤.
-- 컨텍스트 실험은 4k–16k까지(24GB), 1M은 (C)의 해석 곡선으로만.
+## Roadmap progress ([`ROADMAP.md`](ROADMAP.md))
 
-## 로드맵 진행 ([`ROADMAP.md`](ROADMAP.md))
-| Step | 내용 | 상태 |
+| Step | Content | Status |
 |---|---|:--:|
-| 1 | 측정 인프라 · 노이즈 플로어 · 시스템 프로파일 | ✅ |
-| 2 | 토크나이저 char-level → BPE (하드 게이트) | ✅ |
-| 3 | CSA/HCA 압축-KV 어텐션 *(long pole)* | ✅ 구현+parity (측정: KV 분석 ✓ / 경험 패리티 레짐-게이팅) |
-| 4 | mHC (Manifold-Constrained Hyper-Connections) | ✅ 구현+parity (측정: op-norm=1.000 non-expansive ✓) |
-| 5 | DeepSeekMoE (V3→V4 델타만) | ✅ 구현+parity (측정: load CV 0.63→0.24 ✓) |
-| 6 | Muon 옵티마이저 + MTP | ✅ 구현+parity (측정: MTP acceptance 30% ✓ / Muon best-LR 토이-null) |
-| 7 | FP4 QAT (Ampere = simulation-only) | ✅ 구현+parity (측정: PTQ 미붕괴 → 레짐 게이트) |
-| 8 | 폐막 재프로파일 + 귀속 원장 | ✅ KV 귀속 잔차 0 화해 |
+| 1 | Measurement infra · noise floor · system profile | ✅ |
+| 2 | Tokenizer char-level → BPE (hard gate) | ✅ |
+| 3 | CSA/HCA compressed-KV attention *(long pole)* | ✅ impl + parity (KV analysis ✓ / empirical parity regime-gated) |
+| 4 | mHC (Manifold-Constrained Hyper-Connections) | ✅ impl + parity (op-norm = 1.000 non-expansive ✓) |
+| 5 | DeepSeekMoE (V3→V4 deltas only) | ✅ impl + parity (load CV 0.63 → 0.24 ✓) |
+| 6 | Muon optimizer + MTP | ✅ impl + parity (MTP acceptance 30% ✓ / Muon best-LR toy-null) |
+| 7 | FP4 QAT (Ampere = simulation-only) | ✅ impl + parity (PTQ does not collapse → regime gate) |
+| 8 | Closing reprofile + attribution ledger | ✅ KV attribution residual reconciled to 0 |
 
-## 라이선스
-MIT (`LICENSE` 참조). 참조하는 DeepSeek-V4 보고서·모델의 라이선스(arXiv:2606.19348)는 이와 별개.
+## License
+
+MIT (see [`LICENSE`](LICENSE)). The referenced DeepSeek-V4 report and model
+(arXiv:2606.19348) are under their own separate licenses.

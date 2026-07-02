@@ -16,13 +16,17 @@ is **not** in the repo (copyright, `.gitignore`'d). The authoritative project pl
 corrections, and per-step methodology live in **`ROADMAP.md`** — read it before implementing
 any V4 component.
 
-Currently at **Step 1 of 8** (measurement infrastructure + baseline). V4 components are wired
-as stubs that raise `NotImplementedError` with instructions for what to build.
+**All 8 roadmap steps are complete.** The five V4 mechanisms (CSA/HCA, mHC, DeepSeekMoE,
+Muon + MTP, FP4 QAT) are implemented from scratch and parity-verified against a pinned
+`transformers deepseek_v4` reference (`parity.py`, 18 cases, max-abs ≤ 1e-4). The measurement
+track (`measure.py`) judges each mechanism's characteristic observable through the 2σ gate, and
+the Step 8 attribution ledger reconciles per-component KV savings with the system profile.
 
 ## Commands
 
 ```bash
-pip install -r requirements.txt        # torch>=2.2, numpy, matplotlib (transformers added in Steps 3-7)
+pip install -r requirements.txt        # torch>=2.2, numpy, matplotlib, datasets, tokenizers
+                                        # (transformers optional — pinned commit for parity cross-checks)
 
 # Baseline training
 python train.py --config small                       # seconds-to-minutes; CPU or GPU; plumbing/CI
@@ -30,10 +34,16 @@ python train.py --config gpu3090 --data_path corpus.txt   # ~85M dense baseline 
 python train.py --config gpu3090 --no_compile        # disable torch.compile while editing modules
 python plot.py out/small/log.json                    # overlay loss curves
 
-# Step 1 deliverables
+# BPE corpus + tokenizer (Step 2, hard gate before Steps 3/5/6)
+python build_corpus.py                               # stream/assemble the multi-domain corpus
+python train_tokenizer.py                            # train the frozen 16k BPE
+python tokenize_corpus.py                            # pre-tokenize to memmapped uint16 .bin shards
+
+# Measurement infrastructure (A/B/C) + measurement track
 python noise_floor.py --config small --n_seeds 5     # (A) empirical σ_seed + 2σ thresholds
 python parity.py                                     # (B) numeric cross-check harness (exit 1 on failure)
 python profile_analytic.py                           # (C) analytic KV/FLOPs vs context (no weights loaded)
+python measure.py                                    # Steps 3-8 observables + 2σ verdicts + attribution ledger
 ```
 
 There is no test runner, linter, or `pytest` suite. **`parity.py` is the test suite** — it runs
@@ -64,10 +74,9 @@ Config flags select baseline vs. component. Baseline values are listed first and
 | `optimizer` (TrainConfig) | `adamw` | `muon` | `components/muon.py` (Step 6) |
 
 Dispatch happens in `model.py` (`_build_attention`, `_build_ffn`, `Block.__init__`,
-`GPT.configure_optimizers`). Each non-baseline branch lazily imports the component, whose
-constructor raises `NotImplementedError` with a message pointing to the ROADMAP section and the
-`transformers deepseek_v4` submodule to cross-check against. **To implement a step: fill in the
-component, then add a parity case.**
+`GPT.configure_optimizers`). Each non-baseline branch lazily imports its implemented component.
+**To extend or re-verify a mechanism: edit the component, then run (and if needed extend) its
+`parity.py` case against the pinned `transformers deepseek_v4` submodule.**
 
 ### Key files
 
@@ -79,17 +88,23 @@ component, then add a parity case.**
   `CausalSelfAttention`) are written to be importable and numerically checkable in isolation by
   `parity.py`. RMSNorm upcasts bf16/fp16 to fp32 but preserves fp32/fp64 exactly (so parity runs
   at full precision).
-- `data.py` — `CharDataset`. Char-level is **Step 1 plumbing only**; switching to BPE is a HARD
-  GATE before Steps 3/5/6 (char-level undermines MoE specialization, sparse attention, MTP
-  acceptance — see ROADMAP §2). `data_seed` controls sampling order independently of `init_seed`.
+- `data.py` — `CharDataset` (Step 1 plumbing / CI) and `BPEDataset` (Step 2). The char→BPE switch
+  was a HARD GATE before Steps 3/5/6, since char-level undermines MoE specialization, sparse
+  attention, and MTP acceptance (ROADMAP §2); `BPEDataset` reads memmapped uint16 `.bin` shards
+  produced by the `build_corpus`/`train_tokenizer`/`tokenize_corpus` pipeline. `data_seed` controls
+  sampling order independently of `init_seed`.
 - `train.py` — `train_once(cfg)` is import-friendly so `noise_floor.py` drives many seeds
   in-process. bf16 autocast (Ampere), cosine LR + warmup, deterministic (`warn_only`) seeding,
   JSON logs to `out/<name>/log_i{init}_d{data}.json` plus a canonical `log.json`.
 - `noise_floor.py` / `parity.py` / `profile_analytic.py` — Step 1 (A)/(B)/(C). `profile_analytic.py`
   computes KV/FLOPs curves analytically from verified config numbers (a 3090 cannot hold the
   1.6T/284B models or a 1M context), reproducing the *shape* of the report's headline ratios.
-- `components/*.py` — V4 stubs. Each docstring is a spec sheet: verified DeepSeek-V4 values, what
-  to build, and the pinned-commit cross-check.
+- `measure.py` — the Steps 3-8 measurement track: runs each mechanism's characteristic observable,
+  applies the 2σ verdict, and builds the closing attribution ledger (component → measured
+  FLOP/KV share vs the decomposition hypothesis).
+- `components/*.py` — the V4 implementations (`attention.py` CSA/HCA, `ffn.py` MoE, `residual.py`
+  mHC, `muon.py`, `mtp.py`, `quant.py` FP4). Each docstring is a spec sheet: verified DeepSeek-V4
+  values and the pinned-commit cross-check.
 
 ## Critical conventions
 
